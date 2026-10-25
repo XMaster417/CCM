@@ -1,4 +1,4 @@
-"""Análisis del dataset; imágenes en public/images y CSV en public/documents.
+"""Análisis del dataset; imágenes en public/images/eda y CSV en public/documents.
 
 No descarga, elimina, modifica ni divide las imágenes originales.
 """
@@ -14,7 +14,7 @@ from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "data" / "raw"
-OUTPUT_DIR = ROOT / "public" / "images"
+OUTPUT_DIR = ROOT / "public" / "images" / "eda"
 DOCUMENTS_DIR = ROOT / "public" / "documents"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 SEED = 42
@@ -53,7 +53,7 @@ def save_figure(fig, output_dir, name):
     else:                           # no hay titulo, solo acomoda la imagen
         fig.tight_layout()
 
-    fig.savefig(output_dir / f"analisis_{name}.png", dpi=150, facecolor="white")
+    fig.savefig(output_dir / f"eda_{name}.png", dpi=150, facecolor="white")
     plt.close(fig)
 
 def save_table(frame, output_dir, name, title, documents_dir=DOCUMENTS_DIR):
@@ -320,7 +320,7 @@ def gallery(paths, labels, raw_dir, output_dir, name, title, columns=4):
     """
     if not paths:
         # Evita mostrar candidatos de una ejecución anterior si ya no existen.
-        (output_dir / f"analisis_{name}.png").unlink(missing_ok=True)
+        (output_dir / f"eda_{name}.png").unlink(missing_ok=True)
         return
 
     # Calcula el numero de filas necesarias.
@@ -546,7 +546,7 @@ def analyze_dataset(raw_dir=RAW_DIR, output_dir=OUTPUT_DIR,
                 raw_dir, output_dir, documents_dir)
 
     print(f"Análisis terminado: {len(images)} imágenes, {len(valid)} legibles, {len(classes)} clases.", flush=True)
-    print(f"Imagenes: {output_dir / 'analisis_*.png'}", flush=True)
+    print(f"Imagenes: {output_dir / 'eda_*.png'}", flush=True)
     print(f"Documentos: {documents_dir / 'analisis_*.csv'}", flush=True)
 
 if __name__ == "__main__":
