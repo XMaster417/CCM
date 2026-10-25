@@ -15,7 +15,7 @@ from PIL import Image, ImageOps
 # Preparar las carpetas del proyecto y el tamaño de las imagenes.
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "data" / "raw"
-ANALYSIS_DIR = ROOT / "public" / "images"
+ANALYSIS_DIR = ROOT / "public" / "documents"
 PROCESSED_DIR = ROOT / "data" / "processed"
 IMAGE_SIZE = 224
 
@@ -159,7 +159,7 @@ def transform_dataset(raw_dir=RAW_DIR, output_dir=PROCESSED_DIR,
         raw_dir (str | Path): Carpeta que con datos crudos.
         output_dir (str | Path): Carpeta donde se guardan los JPG y su metadata.
         image_size (int): Ancho y alto de las imagenes procesadas, en pixeles.
-        analysis_dir (str | Path): Carpeta que el analisis de duplicados.
+        analysis_dir (str | Path): Carpeta con los CSV de duplicados del análisis.
 
     Returns:
         dict: Resumen con los conteos y las rutas de las imagenes excluidas.
