@@ -57,3 +57,37 @@ revisión visual y no equivalen a duplicados confirmados. Se comparan todos los
 pares, por lo que esa etapa tiene costo cuadrático. Los indicadores de calidad
 se calculan en gris sobre miniaturas de hasta 256 píxeles por lado; dependen
 también del fondo y las texturas y no justifican descartar imágenes automáticamente.
+
+## División del dataset
+
+Después de la transformación, `src/main.py` divide `data/processed` en train
+(70%), validation (15%) y test (15%), estratificando por clase con semilla 42.
+Utiliza dos llamadas a `train_test_split` de scikit-learn con `stratify`: primero
+separa train del resto y después divide el resto en validation y test.
+Para ejecutar únicamente la división:
+
+```powershell
+.\env\Scripts\python.exe src/scripts/split_data.py
+```
+
+Los metadatos se guardan en `data/sets/train/metadata.csv`,
+`data/sets/val/metadata.csv` y `data/sets/test/metadata.csv`. La columna `path`
+contiene rutas relativas a la carpeta de entrada; las imágenes permanecen allí.
+Para cargar una imagen, combina esa carpeta con el valor de `path`.
+
+Las gráficas por conjunto y la tabla visual se guardan en `public/images/split/`.
+Los conteos por clase se exportan a `public/documents/split_conteos_clases.csv`.
+Una nueva ejecución actualiza los CSV y PNG generados.
+
+La entrada debe contener `metadata.csv` con el mismo esquema que el procesado
+y las imágenes referenciadas. Configura las rutas y la semilla en las constantes
+al inicio de `src/scripts/split_data.py`. Por ejemplo, para usar `data/augmented`:
+
+```python
+INPUT_DIR = ROOT / "data" / "augmented"
+SETS_DIR = ROOT / "data" / "sets"
+SEED = 42
+```
+
+Los tamaños se configuran con `TRAIN_PERCENT = 70`, `VAL_PERCENT = 15` y
+`TEST_PERCENT = 15`; deben ser enteros positivos y sumar 100.

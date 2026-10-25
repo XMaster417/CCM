@@ -1,7 +1,8 @@
-"""Descarga, analiza y transforma el dataset de imágenes de automóviles."""
+"""Descarga, analiza, transforma y divide el dataset de automóviles."""
 
 from scripts.data_analysis import analyze_dataset
 from scripts.load_data import download_data, preview_images
+from scripts.split_data import split_dataset
 from scripts.transform_data import transform_dataset
 
 
@@ -26,6 +27,10 @@ def main():
 # Transformación y preprocesamiento
 # ------------------------------------------------------------------------------
     transform_dataset()
+# ------------------------------------------------------------------------------
+# División estratificada
+# ------------------------------------------------------------------------------
+    split_dataset()
 
 if __name__ == "__main__":
     main()
