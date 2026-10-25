@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 
 
 # Preparar las carpetas del proyecto y el tamaño de las imagenes.
@@ -129,6 +129,10 @@ def preprocess_image(path, image_size=IMAGE_SIZE):
     with Image.open(path) as source:
         rgb = ImageOps.exif_transpose(source).convert("RGB")
         # Ajustar la imagen dentro de un cuadrado, centrada y sin recortar.
+        rgb = ImageOps.contain(
+            rgb, (image_size, image_size), method=Image.Resampling.LANCZOS,
+        )
+        rgb = rgb.filter(ImageFilter.GaussianBlur(radius=1))
         resized = ImageOps.pad(
             rgb, (image_size, image_size), method=Image.Resampling.LANCZOS,
             color=(0, 0, 0), centering=(0.5, 0.5),
