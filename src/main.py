@@ -1,7 +1,8 @@
-"""Descarga el dataset, guarda su vista previa y ejecuta el análisis de datos."""
+"""Descarga, analiza y transforma el dataset de imágenes de automóviles."""
 
 from data_analysis import analyze_dataset
 from load_data import download_data, preview_images
+from transform_data import transform_dataset
 
 
 def main():
@@ -22,8 +23,9 @@ def main():
 # ------------------------------------------------------------------------------
     analyze_dataset()
 # ------------------------------------------------------------------------------
-# Continuará... muajajaja
+# Transformación y preprocesamiento
 # ------------------------------------------------------------------------------
+    transform_dataset()
 
 if __name__ == "__main__":
     main()

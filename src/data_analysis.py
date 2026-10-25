@@ -1,4 +1,4 @@
-"""Análisis reproducible del dataset local; salidas en public/images/analisis_*.
+"""Análisis del dataset; imágenes en public/images/eda y CSV en public/documents.
 
 No descarga, elimina, modifica ni divide las imágenes originales.
 """
@@ -14,7 +14,8 @@ from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "data" / "raw"
-OUTPUT_DIR = ROOT / "public" / "images"
+OUTPUT_DIR = ROOT / "public" / "images" / "eda"
+DOCUMENTS_DIR = ROOT / "public" / "documents"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 SEED = 42
 DHASH_DISTANCE = 5
@@ -52,21 +53,22 @@ def save_figure(fig, output_dir, name):
     else:                           # no hay titulo, solo acomoda la imagen
         fig.tight_layout()
 
-    fig.savefig(output_dir / f"analisis_{name}.png", dpi=150, facecolor="white")
+    fig.savefig(output_dir / f"eda_{name}.png", dpi=150, facecolor="white")
     plt.close(fig)
 
-def save_table(frame, output_dir, name, title):
+def save_table(frame, output_dir, name, title, documents_dir=DOCUMENTS_DIR):
     """
     Exporta una tabla a CSV y crea una versión visual de sus datos en PNG.
     El csv contiene los valores originales, en la imagen solo dos decimales.
 
     Args:
         frame (pd.DataFrame): Tabla pequeña que se desea exportar y dibujar.
-        output_dir (str): Carpeta de destino.
+        output_dir (str): Carpeta de destino de la imagen PNG.
         name (str): Nombre base para el archivo csv e imagen.
         title (str): Título que se mostrará encima de la tabla en el PNG.
+        documents_dir (str): Carpeta de destino del archivo CSV.
     """
-    save_csv(frame, output_dir, name)
+    save_csv(frame, documents_dir, name)
     display = frame.copy()
     
     for column in display.select_dtypes(include="number"):
@@ -318,7 +320,7 @@ def gallery(paths, labels, raw_dir, output_dir, name, title, columns=4):
     """
     if not paths:
         # Evita mostrar candidatos de una ejecución anterior si ya no existen.
-        (output_dir / f"analisis_{name}.png").unlink(missing_ok=True)
+        (output_dir / f"eda_{name}.png").unlink(missing_ok=True)
         return
 
     # Calcula el numero de filas necesarias.
@@ -341,7 +343,7 @@ def gallery(paths, labels, raw_dir, output_dir, name, title, columns=4):
 def make_charts(
     valid, classes, numeric, 
     metadata, creators, exact, 
-    candidates, raw_dir, output_dir
+    candidates, raw_dir, output_dir, documents_dir=DOCUMENTS_DIR
 ):
     """
     Genera las tablas, gráficas y muestras visuales del análisis exploratorio.
@@ -358,17 +360,18 @@ def make_charts(
         exact (pd.DataFrame): Grupos de duplicados exactos.
         candidates (pd.DataFrame): Pares similares.
         raw_dir (Path): Carpeta raíz donde están las imágenes originales.
-        output_dir (Path): Carpeta existente donde se guardaran las salidas.
+        output_dir (Path): Carpeta existente donde se guardaran las imagenes.
+        documents_dir (Path): Carpeta existente donde se guardaran los CSV.
     """
     # Guarda las tablas de clases y estadisticas.
     save_table(classes.rename(columns={
         "class": "Clase", "images": "Imágenes", "readable": "Legibles",
         "percent": "% del total", "median_kib": "Mediana KiB",
         "median_width": "Ancho mediano", "median_height": "Alto mediano",
-    }), output_dir, "tabla_clases", "Resumen por clase (dimensiones en píxeles)")
+    }), output_dir, "tabla_clases", "Resumen por clase (dimensiones en píxeles)", documents_dir)
     
     save_table(numeric.round(3), output_dir, 
-                "tabla_estadisticas", "Distribuciones de las imágenes legibles"
+                "tabla_estadisticas", "Distribuciones de las imágenes legibles", documents_dir
     )
     
     fig, ax = plt.subplots(figsize=(11, 6))
@@ -448,7 +451,7 @@ def make_charts(
             for _, row in subset.iterrows():
                 extremes.append({"metric": column, "side": side, "value": row[column],
                                  "path": row["path"], "class": row["class"]})
-    save_csv(pd.DataFrame(extremes), output_dir, "extremos")
+    save_csv(pd.DataFrame(extremes), documents_dir, "extremos")
     gallery([r["path"] for r in extremes],
             [f"{r['metric']} {r['side']}: {r['value']:.2f}\n{r['path']}" for r in extremes],
             raw_dir, output_dir, "extremos", "Extremos medidos · requieren interpretación visual")
@@ -470,7 +473,8 @@ def make_charts(
         gallery(paths, labels, raw_dir, output_dir, f"similares_{suffix}",
                 "Candidatos visuales por pares consecutivos · no son duplicados confirmados")
 
-def analyze_dataset(raw_dir=RAW_DIR, output_dir=OUTPUT_DIR):
+def analyze_dataset(raw_dir=RAW_DIR, output_dir=OUTPUT_DIR,
+                    documents_dir=DOCUMENTS_DIR):
     """
     Lleva a cabo la inspección del dataset local y genera sus resultados.
     Lee los metadatos, inventaría las imágenes, calcula sus características,
@@ -479,10 +483,12 @@ def analyze_dataset(raw_dir=RAW_DIR, output_dir=OUTPUT_DIR):
 
     Args:
         raw_dir (str): Carpeta que contiene metadata.csv y las imágenes.
-        output_dir (str): Carpeta donde se guardarán los resultados.
+        output_dir (str): Carpeta donde se guardarán las imagenes del análisis.
+        documents_dir (str): Carpeta donde se guardarán los CSV del análisis.
     """
     # Convertir str a rutas
     raw_dir, output_dir = Path(raw_dir), Path(output_dir)
+    documents_dir = Path(documents_dir)
     metadata_path = raw_dir / "metadata.csv"
 
     # Conseguir los datos.
@@ -490,6 +496,7 @@ def analyze_dataset(raw_dir=RAW_DIR, output_dir=OUTPUT_DIR):
     paths = sorted(path for path in raw_dir.rglob("*")
                    if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS)
     output_dir.mkdir(parents=True, exist_ok=True)
+    documents_dir.mkdir(parents=True, exist_ok=True)
     records = []
 
     # Agrega una ficha por foto
@@ -522,8 +529,8 @@ def analyze_dataset(raw_dir=RAW_DIR, output_dir=OUTPUT_DIR):
 
     # Buscar duplicados y posibles repetidos.
     exact, candidates = duplicate_analysis(images)
-    save_csv(exact, output_dir, "duplicados_exactos")
-    save_csv(candidates, output_dir, "similares_candidatos")
+    save_csv(exact, documents_dir, "duplicados_exactos")
+    save_csv(candidates, documents_dir, "similares_candidatos")
     creators = []
     for class_name, group in metadata.groupby("class", sort=True):
         counts = group["creator"].replace("", "(sin creador)").value_counts()
@@ -531,14 +538,16 @@ def analyze_dataset(raw_dir=RAW_DIR, output_dir=OUTPUT_DIR):
                          "top_creator": counts.index[0], "top_creator_images": int(counts.iloc[0]),
                          "top_creator_percent": float(counts.iloc[0] / len(group) * 100)})
     creators = pd.DataFrame(creators)
-    save_table(creators, output_dir, "tabla_creadores", "Concentración de creadores por clase (metadata)")
+    save_table(creators, output_dir, "tabla_creadores", "Concentración de creadores por clase (metadata)", documents_dir)
     source_counts = metadata["source"].replace("", "(sin fuente)").value_counts()
     save_table(source_counts.rename_axis("Fuente").reset_index(name="Registros"),
-               output_dir, "tabla_fuentes", "Procedencia declarada en metadata.csv")
-    make_charts(valid, classes, numeric, metadata, creators, exact, candidates, raw_dir, output_dir)
+               output_dir, "tabla_fuentes", "Procedencia declarada en metadata.csv", documents_dir)
+    make_charts(valid, classes, numeric, metadata, creators, exact, candidates,
+                raw_dir, output_dir, documents_dir)
 
     print(f"Análisis terminado: {len(images)} imágenes, {len(valid)} legibles, {len(classes)} clases.", flush=True)
-    print(f"Resultados: {output_dir / 'analisis_*'}", flush=True)
+    print(f"Imagenes: {output_dir / 'eda_*.png'}", flush=True)
+    print(f"Documentos: {documents_dir / 'analisis_*.csv'}", flush=True)
 
 if __name__ == "__main__":
     analyze_dataset()

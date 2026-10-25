@@ -14,7 +14,7 @@ from PIL import Image, UnidentifiedImageError
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "data" / "raw"
-PREVIEW_PATH = ROOT / "public" / "images" / "preview.png"
+PREVIEW_PATH = ROOT / "public" / "images" / "eda" / "preview.png"
 MARKER = ROOT / "data" / ".car_dataset_complete.json"
 DATASET = "lightangle/car-model-image-classification"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -82,7 +82,7 @@ def download_data():
 
 def preview_images(images):
     """
-    Guarda hasta seis imágenes que se puedan abrir en public/images/preview.png.
+    Guarda hasta seis imágenes que se puedan abrir en public/images/eda/preview.png.
 
     Args: 
         images (list): lista de rutas a las imagenes en la carpeta data/raw.
