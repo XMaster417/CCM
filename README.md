@@ -38,7 +38,7 @@ en `data/raw/`, guarda una vista previa de hasta seis imágenes y realiza un an�
 únicamente los datos ya descargados, sin conexión a Kaggle:
 
 ```powershell
-.\env\Scripts\python.exe src/data_analysis.py
+.\env\Scripts\python.exe src/scripts/data_analysis.py
 ```
 
 Todas las salidas del análisis se guardan en `public/images/` con el prefijo

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "raw"
 OUTPUT_DIR = ROOT / "public" / "images" / "eda"
 DOCUMENTS_DIR = ROOT / "public" / "documents"

@@ -1,8 +1,8 @@
 """Descarga, analiza y transforma el dataset de imágenes de automóviles."""
 
-from data_analysis import analyze_dataset
-from load_data import download_data, preview_images
-from transform_data import transform_dataset
+from scripts.data_analysis import analyze_dataset
+from scripts.load_data import download_data, preview_images
+from scripts.transform_data import transform_dataset
 
 
 def main():
