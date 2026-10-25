@@ -1,0 +1,4 @@
+﻿path_a,path_b,class_a,class_b,distance,cross_class
+Audi_R8/0061.jpg,Audi_R8/0221.jpg,Audi_R8,Audi_R8,1,False
+Porsche_911/0028.jpg,Porsche_911/0042.jpg,Porsche_911,Porsche_911,2,False
+Ford_Mustang/0060.jpg,Ford_Mustang/0068.jpg,Ford_Mustang,Ford_Mustang,4,False
