@@ -1,0 +1,11 @@
+﻿class,train,val,test,total
+Audi_R8,161,34,35,230
+Audi_RS5,86,18,18,122
+BMW_M3,162,35,35,232
+BMW_M5,167,36,35,238
+Chevrolet_Camaro,153,33,33,219
+Ford_Mustang,162,35,35,232
+Mercedes_AMG_GT,103,22,22,147
+Nissan_GT_R,151,32,33,216
+Porsche_911,157,34,33,224
+Toyota_Supra,144,31,31,206

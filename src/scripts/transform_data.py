@@ -13,7 +13,7 @@ from PIL import Image, ImageFilter, ImageOps
 
 
 # Preparar las carpetas del proyecto y el tamaño de las imagenes.
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "raw"
 ANALYSIS_DIR = ROOT / "public" / "documents"
 PROCESSED_DIR = ROOT / "data" / "processed"

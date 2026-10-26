@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "raw"
 OUTPUT_DIR = ROOT / "public" / "images" / "eda"
 DOCUMENTS_DIR = ROOT / "public" / "documents"
@@ -24,7 +24,7 @@ METRICS = [
     "brightness", "contrast", "sharpness", "dark_fraction", "light_fraction",
 ]
 
-def save_csv(frame, output_dir, name):
+def save_csv(frame, output_dir, name, prefix="analisis"):
     """
     Exporta una tabla como CSV con el prefijo que identifica al análisis.
 
@@ -32,14 +32,15 @@ def save_csv(frame, output_dir, name):
         frame (pd.DataFrame): Tabla que se guardará, con sus filas y columnas.
         output_dir (str): Carpeta de destino.
         name (str): Nombre base para el archivo csv.
+        prefix (str): Prefijo del archivo de salida.
     """
     frame.to_csv(
-        output_dir / f"analisis_{name}.csv",    # dirección y nombre del archivo
+        output_dir / f"{prefix}_{name}.csv",    # dirección y nombre del archivo
         index=False,                            # no guarda indice de tabla
         encoding="utf-8-sig"                    # permite leer acentos
     )
 
-def save_figure(fig, output_dir, name):
+def save_figure(fig, output_dir, name, prefix="eda"):
     """
     Guarda una imagen como png con fondo blanco a 150 dpi.
 
@@ -47,16 +48,18 @@ def save_figure(fig, output_dir, name):
         fig (matplotlib.figure.Figure): Figura que contiene la imagen.
         output_dir (str): Carpeta de destino.
         name (str): Nombre base para el archivo csv.
+        prefix (str): Prefijo del archivo de salida.
     """
     if fig._suptitle is not None:   # hay titulo, reserva espacio arriba
         fig.tight_layout(rect=(0, 0, 1, 0.95), h_pad=2)
     else:                           # no hay titulo, solo acomoda la imagen
         fig.tight_layout()
 
-    fig.savefig(output_dir / f"eda_{name}.png", dpi=150, facecolor="white")
+    fig.savefig(output_dir / f"{prefix}_{name}.png", dpi=150, facecolor="white")
     plt.close(fig)
 
-def save_table(frame, output_dir, name, title, documents_dir=DOCUMENTS_DIR):
+def save_table(frame, output_dir, name, title, documents_dir=DOCUMENTS_DIR,
+               csv_prefix="analisis", figure_prefix="eda"):
     """
     Exporta una tabla a CSV y crea una versión visual de sus datos en PNG.
     El csv contiene los valores originales, en la imagen solo dos decimales.
@@ -67,8 +70,10 @@ def save_table(frame, output_dir, name, title, documents_dir=DOCUMENTS_DIR):
         name (str): Nombre base para el archivo csv e imagen.
         title (str): Título que se mostrará encima de la tabla en el PNG.
         documents_dir (str): Carpeta de destino del archivo CSV.
+        csv_prefix (str): Prefijo del archivo CSV.
+        figure_prefix (str): Prefijo de la imagen PNG.
     """
-    save_csv(frame, documents_dir, name)
+    save_csv(frame, documents_dir, name, prefix=csv_prefix)
     display = frame.copy()
     
     for column in display.select_dtypes(include="number"):
@@ -88,7 +93,7 @@ def save_table(frame, output_dir, name, title, documents_dir=DOCUMENTS_DIR):
         if row == 0:
             cell.set_facecolor("#dce9f5")
 
-    save_figure(fig, output_dir, name)
+    save_figure(fig, output_dir, name, prefix=figure_prefix)
 
 def inspect_image(path, raw_dir):
     """
