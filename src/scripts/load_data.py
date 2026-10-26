@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from PIL import Image, UnidentifiedImageError
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "raw"
 PREVIEW_PATH = ROOT / "public" / "images" / "eda" / "preview.png"
 MARKER = ROOT / "data" / ".car_dataset_complete.json"
