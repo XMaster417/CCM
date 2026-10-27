@@ -1,6 +1,7 @@
 """Descarga, analiza, transforma, divide y entrena la CNN de automóviles."""
 
-from models.cnn_v1 import train_model
+from models.cnn_v1 import train_model_v1
+from models.cnn_v2 import train_model_v2
 from scripts.data_analysis import analyze_dataset
 from scripts.load_data import download_data, preview_images
 from scripts.split_data import split_dataset
@@ -35,7 +36,7 @@ def main():
 # ------------------------------------------------------------------------------
 # Entrenamiento y evaluación de la CNN
 # ------------------------------------------------------------------------------
-    train_model()
+    train_model_v2()
 
 if __name__ == "__main__":
     main()
