@@ -16,11 +16,10 @@ from models.cnn_v1 import (
 
 OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v2"
 
-
 def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
                 epochs=EPOCHS, batch_size=BATCH_SIZE, seed=SEED):
     """
-    Reutiliza los datos, entrenamiento y reportes con Dropout(0.3), deteniendo
+    Reutiliza los datos, entrenamiento y reportes con Dropout(0.5), deteniendo
     el entrenamiento según el F1 macro de validación.
     
     Args:
@@ -47,10 +46,9 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         epochs=epochs, 
         batch_size=batch_size, 
         seed=seed,
-        dropout_rate=0.3,
+        dropout_rate=0.5,
         model_name="cnn_v2",
     )
-
 
 if __name__ == "__main__":
     train_model_v2()
