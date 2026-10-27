@@ -33,7 +33,7 @@ OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v1"
 IMAGE_SHAPE = (224, 224, 3)
 NUM_CLASSES = 10
 EPOCHS = 30
-PATIENCE = 5  # Épocas consecutivas sin reducir val_loss antes de detenerse.
+PATIENCE = 5  # Épocas consecutivas sin aumentar val_f1_macro antes de detenerse.
 BATCH_SIZE = 32
 SEED = 42
 SPLITS = ("train", "val", "test")
@@ -237,13 +237,36 @@ def save_training_plots(history, output_dir, report_prefix="cnn_v1"):
         ax.legend()
         save_figure(fig, output_dir, metric, prefix=report_prefix)
 
+def calculate_metrics(expected, predicted):
+    """
+    Calcula accuracy y métricas macro con el mismo criterio para los reportes
+    finales y el seguimiento de validación por época.
+
+    Args:
+        expected (np.ndarray): Etiquetas reales, de 0 a 9.
+        predicted (np.ndarray): Clases predichas mediante argmax, de 0 a 9.
+
+    Returns:
+        dict: accuracy, precision, recall y f1. Las métricas macro incluyen
+            las diez clases y asignan 0 cuando hay una división indefinida.
+    """
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        expected, predicted, labels=np.arange(NUM_CLASSES), average="macro",
+        zero_division=0,
+    )
+    return {
+        "accuracy": float(accuracy_score(expected, predicted)),
+        "precision": float(precision), "recall": float(recall), "f1": float(f1),
+    }
+
+
 def save_final_reports(model, datasets, splits, class_names, output_dir,
                        report_prefix="cnn_v1"):
     """
     Calcula las métricas finales y genera cuatro reportes PNG.
 
-    Se ejecuta después de fit, cuando EarlyStopping ya restauró los mejores
-    pesos. Las curvas por época conservan los valores históricos originales.
+    Se ejecuta después de fit, cuando EarlyStopping ya restauró los pesos con
+    mayor F1 macro de validación. Las curvas conservan el historial original.
 
     Args:
         model (tf.keras.Model): Modelo entrenado.
@@ -270,14 +293,8 @@ def save_final_reports(model, datasets, splits, class_names, output_dir,
         predicted = probabilities.argmax(axis=1)
         expected = splits[name]["labels"]
 
-        # Comparar con las etiquetas reales. Macro da el mismo peso a cada clase
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            expected, predicted, labels=labels, average="macro", zero_division=0,
-        )
-        metrics[name] = {
-            "accuracy": float(accuracy_score(expected, predicted)),
-            "precision": float(precision), "recall": float(recall), "f1": float(f1),
-        }
+        # Calcula accuracy, precision, recall y f1 macro.
+        metrics[name] = calculate_metrics(expected, predicted)
         # Contar aciertos en la diagonal y errores fuera de la diagonal.
         # Los valores son cantidades de imágenes, no porcentajes.
         matrix = confusion_matrix(expected, predicted, labels=labels)
@@ -324,16 +341,17 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         sets_dir (str | Path): Carpeta con los CSV de train, val y test.
         output_dir (str | Path): Carpeta para los resultados (imagenes).
         epochs (int): Máximo de número de épocas. EarlyStopping puede terminar 
-            antes si val_loss no mejora durante PATIENCE épocas.
+            antes si val_f1_macro no aumenta durante PATIENCE épocas.
         batch_size (int): Máximo de imágenes por lote, por defecto 32.
         seed (int): Semilla de inicialización y mezcla, por defecto 42.
-        dropout_rate (float): Tasa de dropout después , con 0 no lo agrega.
+        dropout_rate (float): Tasa de dropout después de Dense ReLU; 0 lo omite.
         model_name (str): Nombre del modelo y prefijo de sus reportes PNG.
 
     Returns:
-        dict: model (modelo con mejores pesos de validación), history
+        dict: model (modelo con mayor F1 macro de validación), history
             (dict de Keras con accuracy, loss, val_accuracy, val_loss,
-            test_accuracy y test_loss por época), metrics (métricas finales),
+            val_f1_macro, test_accuracy y test_loss por época), metrics
+            (métricas finales),
             confusion_matrices (matrices 10x10), class_names (orden de clases)
             y output_dir (Path). Solo se exportan los PNG, no el diccionario.
     """
@@ -358,22 +376,31 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
     # Construir el modelo y los callbacks que acompañan cada época.
     model = build_model(dropout_rate=dropout_rate, model_name=model_name)
 
-    def evaluate_test(epoch, logs):
+    def evaluate_epoch_metrics(epoch, logs):
         """
-        Añade las métricas de test al History de Keras.
+        Registra F1 macro de validación antes de EarlyStopping y las métricas
+        de test. Solo el F1 de validación determina cuándo detenerse.
 
         Args:
             epoch (int): Índice de época proporcionado por Keras.
             logs (dict): Métricas de la época que History guardará después.
         """
+        # El dataset no se mezcla: argmax y etiquetas mantienen el mismo orden.
+        # Calcular F1 sobre toda la validación, no como promedio de los lotes.
+        probabilities = model.predict(datasets["val"], verbose=0)
+        predicted = probabilities.argmax(axis=1)
+        logs["val_f1_macro"] = calculate_metrics(
+            splits["val"]["labels"], predicted,
+        )["f1"]
+
         scores = model.evaluate(datasets["test"], verbose=0, return_dict=True)
         logs["test_loss"] = float(scores["loss"])
         logs["test_accuracy"] = float(scores["accuracy"])
 
-    # Una mejora es una reducción de val_loss. Tras cinco épocas sin mejorar,
-    # detenerse y restaurar los pesos de la época con menor pérdida de val.
+    # Una mejora es un aumento estricto del F1 macro de validación. Tras cinco
+    # épocas sin mejorar, detenerse y restaurar los pesos con mayor F1 macro.
     early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss", mode="min", patience=PATIENCE,
+        monitor="val_f1_macro", mode="max", patience=PATIENCE, min_delta=0,
         restore_best_weights=True, verbose=1,
     )
     print(
@@ -383,12 +410,14 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         flush=True,
     )
 
-    # Keras registra train y val en History. El callback agrega únicamente
-    # test.
+    # Registrar val_f1_macro antes de EarlyStopping y del History de Keras.
+    # También se conservan las métricas de test de cada época.
     history = model.fit(
         train_dataset, validation_data=datasets["val"], epochs=epochs,
-        callbacks=[tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_test),
-                   early_stopping],
+        callbacks=[
+            tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_epoch_metrics),
+            early_stopping,
+        ],
         shuffle=False, verbose=1,
     )
 
@@ -399,7 +428,7 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         output_dir, report_prefix=model_name,
     )
     print(
-        "\nMétricas finales con los mejores pesos de validación "
+        "\nMétricas finales con los pesos de mayor F1 macro de validación "
         "(precision, recall y F1 con promedio macro):",
         flush=True,
     )
@@ -419,4 +448,4 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
     }
 
 if __name__ == "__main__":
-    train_model()
+    train_model_v1()
