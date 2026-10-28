@@ -157,16 +157,17 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED)
         batch_size
     ).prefetch(1)
 
-def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001):
+def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
+                pool_size=(4, 4)):
     """
     Construye y compila la CNN que recibe una imagen y clasifica su automóvil.
-    Recorrido por imagen:
+    Recorrido por imagen con stride 2 y padding same:
         Entrada:     224 x 224 x 3
-        Conv + pool:  56 x  56 x 16
-        Conv + pool:  14 x  14 x 32
-        Conv + pool:   4 x   4 x 64
-        Conv + pool:   1 x   1 x 128
-        Flatten:     128 valores
+        Conv + pool: 112 x 112 x 16
+        Conv + pool:  56 x  56 x 32
+        Conv + pool:  28 x  28 x 64
+        Conv + pool:  14 x  14 x 128
+        Flatten:     25,088 valores
         Dense ReLU:  128 valores
         Softmax:      10 probabilidades que suman aproximadamente 1
 
@@ -175,6 +176,9 @@ def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001):
             no se agrega la capa y se conserva la arquitectura original.
         model_name (str): Nombre del modelo de Keras.
         learning_rate (float): Tasa de aprendizaje de Adam, por defecto 0.001.
+        pool_size (tuple[int, int]): Ventana de max pooling en los cuatro
+            bloques, con stride 2 y padding same. Cambiarla conserva
+            el tamaño de Flatten y los parámetros de la capa Dense.
 
     Returns:
         tf.keras.Sequential: Modelo compilado con Adam, pérdida
@@ -183,11 +187,13 @@ def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001):
     # Declarar la forma de cada imagen.
     layers = [tf.keras.layers.Input(shape=IMAGE_SHAPE)]
     
-    # Añadir cuatro bloques convolución 3x3 con ReLU y max pooling 4x4.
+    # Añadir cuatro bloques convolución 3x3 con ReLU y pooling configurable.
     for filters in (16, 32, 64, 128):
         layers.extend([
             tf.keras.layers.Conv2D(filters, 3, padding="same", activation="relu"),
-            tf.keras.layers.MaxPooling2D(pool_size=(4, 4), padding="same"),
+            tf.keras.layers.MaxPooling2D(
+                pool_size=pool_size, strides=2, padding="same",
+            ),
         ])
     
     # Aplanar, combinar características y producir probabilidades.
@@ -383,8 +389,8 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             confusion_matrices (matrices 10x10), class_names (orden de clases)
             y output_dir (Path). Solo se exportan los PNG, no el diccionario.
     """
-    # Usar CPU, fijar la semilla y validar metadatos, clases y rutas.
-    tf.config.set_visible_devices([], "GPU")
+    # TensorFlow asigna automáticamente las operaciones compatibles a la GPU.
+    device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
     tf.keras.utils.set_random_seed(seed)
     splits, class_names = load_splits(input_dir, sets_dir)
     output_dir = Path(output_dir)
@@ -406,7 +412,7 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         learning_rate=learning_rate,
     )
     print(
-        f"Entrenamiento en CPU | épocas: {epochs} | batch: {batch_size} | "
+        f"Entrenamiento en {device} | épocas: {epochs} | batch: {batch_size} | "
         f"semilla: {seed}\nImágenes: "
         + ", ".join(f"{name}={len(data['labels'])}" for name, data in splits.items()),
         flush=True,

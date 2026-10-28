@@ -1,10 +1,11 @@
-"""Busca la tasa de aprendizaje de la CNN con dropout y reporta al ganador."""
+"""Compara ventanas de max pooling por F1 macro de validación."""
 
 from pathlib import Path
 import sys
 
 import numpy as np
 import tensorflow as tf
+from sklearn.model_selection import ParameterGrid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from models.cnn_v1 import (
@@ -23,20 +24,80 @@ from models.cnn_v1 import (
     save_final_reports,
     save_training_plots,
 )
+from scripts.data_analysis import plt, save_figure
 
 OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v2"
-LEARNING_RATES = (0.0001, 0.0003, 0.001, 0.003, 0.01)
+LEARNING_RATES = (0.001,)
+DROPOUT_RATES = (0.5,)
+# Appasami y Savarimuthu (2025), sección 4.1:
+# https://doi.org/10.1007/s10791-025-09603-4
+POOL_SIZES = tuple((size, size) for size in range(2, 10))
+
+
+def save_pooling_comparison(search_results, output_dir):
+    """Exporta F1 de validación y diferencia frente a 4x4 para cada candidato.
+
+    Con stride 2 y padding same, las ventanas conservan el tamaño de Flatten
+    y el número de parámetros de Dense.
+    Si la referencia no es válida o no fue evaluada, su diferencia no se calcula.
+    """
+    fig, (scores_ax, delta_ax) = plt.subplots(2, 1, figsize=(12, 10))
+    positions = np.arange(len(search_results))
+    labels = [
+        f"{r['pool_size'][0]}×{r['pool_size'][1]}\n"
+        f"lr={r['learning_rate']:g}\ndropout={r['dropout_rate']:g}\n"
+        f"{r['num_parameters']:,} parámetros"
+        for r in search_results
+    ]
+    scores = [
+        r['best_val_f1_macro'] if r['valid'] else np.nan
+        for r in search_results
+    ]
+    bars = scores_ax.bar(positions, scores, color="#3679ac")
+    scores_ax.bar_label(bars, fmt="%.4f", padding=3)
+    scores_ax.set(ylim=(0, 1.12), ylabel="Mejor F1 macro de validación",
+                  title="Comparación de ventanas de max pooling")
+    deltas = []
+    for result in search_results:
+        baseline = next((
+            r for r in search_results
+            if r['pool_size'] == (4, 4) and r['valid']
+            and r['learning_rate'] == result['learning_rate']
+            and r['dropout_rate'] == result['dropout_rate']
+        ), None)
+        deltas.append(
+            result['best_val_f1_macro'] - baseline['best_val_f1_macro']
+            if result['valid'] and baseline is not None else np.nan
+        )
+    bars = delta_ax.bar(positions, deltas, color="#47956a")
+    delta_ax.bar_label(bars, fmt="%+.4f", padding=3)
+    delta_ax.axhline(0, color="black", linewidth=0.8)
+    delta_ax.margins(y=0.25)
+    delta_ax.set(ylabel="Diferencia de F1 frente a 4×4",
+                 xlabel="Ventana y configuración (NA: candidato o referencia no válidos)")
+    for index, (score, delta) in enumerate(zip(scores, deltas)):
+        if not np.isfinite(score):
+            scores_ax.text(index, 0.02, "NA", ha="center")
+        if not np.isfinite(delta):
+            delta_ax.annotate("NA", (index, 0), ha="center", xytext=(0, 5),
+                              textcoords="offset points")
+    for ax in (scores_ax, delta_ax):
+        ax.set_xticks(positions, labels, fontsize=8)
+        ax.grid(axis="y", alpha=0.25)
+    fig.suptitle("Stride 2 y padding same: todas las ventanas producen "
+                 "las mismas dimensiones y número de parámetros.", fontsize=10)
+    save_figure(fig, output_dir, "pooling_comparison", prefix="cnn_v2")
 
 def fit_candidate(model, train_dataset, validation_dataset, validation_labels,
                   epochs=EPOCHS):
     """
-    Entrena el modelo con una tasa de aprendizaje y guarda los pesos por época.
+    Entrena un candidato de pooling y guarda pesos por época.
 
     Calcula F1 macro sobre toda la validación y conserva los pesos antes de
     que EarlyStopping restaure la mejor época. No evalúa el conjunto de test.
 
     Args:
-        model (tf.keras.Model): Modelo compilado con la tasa que se evaluará.
+        model (tf.keras.Model): Modelo compilado con los hiperparámetros a evaluar.
         train_dataset (tf.data.Dataset): Lotes de entrenamiento mezclados.
         validation_dataset (tf.data.Dataset): Lotes de validación sin mezclar,
             con el mismo orden que validation_labels.
@@ -89,13 +150,16 @@ def fit_candidate(model, train_dataset, validation_dataset, validation_labels,
 
 def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
                 epochs=EPOCHS, batch_size=BATCH_SIZE, seed=SEED, *,
-                learning_rates=LEARNING_RATES):
+                learning_rates=LEARNING_RATES, dropout_rates=DROPOUT_RATES,
+                pool_sizes=POOL_SIZES):
     """
-    Compara las tasas de aprendizaje con Dropout(0.5) y selecciona el modelo
-    con mayor F1 macro de validación.
+    Compara todas las combinaciones de hiperparametros mediante
+    ParameterGrid y selecciona el modelo con mayor F1 macro de validación.
 
     Test se evalúa después de elegir al ganador, usando los pesos que tuvo
     en cada época, sin volver a entrenar ni usar test para seleccionar.
+    Se usa stride 2 y padding same en todas las ventanas, conservando
+    el tamaño de Flatten y el número de parámetros.
     
     Args:
         input_dir (str | Path): Carpeta de las imágenes procesadas.
@@ -107,6 +171,9 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         seed (int): Semilla de inicialización y mezcla, por defecto 42.
         learning_rates (iterable[float]): Tasas positivas y finitas de Adam.
             Se evalúan en orden; si hay empate se conserva la primera.
+        dropout_rates (iterable[float]): Dropouts a evaluar; por defecto solo 0.5.
+        pool_sizes (iterable[tuple[int, int]]): Ventanas, ordenadas de menor
+            a mayor antes de evaluarlas. Por defecto, de 2x2 a 9x9.
 
     Returns:
         dict: model (modelo con mayor F1 macro de validación), history
@@ -114,22 +181,34 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             val_f1_macro, test_accuracy y test_loss por época), metrics
             (métricas finales),
             confusion_matrices (matrices 10x10), class_names (orden de clases)
-            y output_dir (Path), además de best_learning_rate (float) y
-            search_results (lista de resultados por tasa). Las épocas se
-            numeran desde 1. Solo se exportan los PNG, no el diccionario.
+            y output_dir (Path), además de best_learning_rate (float),
+            best_dropout_rate (float), best_pool_size (tuple[int, int]) y
+            search_results (hiperparámetros, F1, épocas y num_parameters
+            por combinación). Las épocas se numeran
+            desde 1. Solo se exportan los PNG, no el diccionario.
     """
     learning_rates = tuple(learning_rates)
-    tf.config.set_visible_devices([], "GPU")
+    dropout_rates = tuple(dropout_rates)
+    pool_sizes = tuple(sorted(tuple(size) for size in pool_sizes))
+    candidates = ParameterGrid({
+        "learning_rate": learning_rates,
+        "dropout_rate": dropout_rates,
+        "pool_size": pool_sizes,
+    })
+    device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
     splits, class_names = load_splits(input_dir, sets_dir)
     search_results = []
     best_result, best_history, best_epoch_weights = None, None, None
     print(
-        f"Búsqueda en CPU | tasas: {learning_rates} | épocas máximas: {epochs} | "
+        f"Búsqueda en {device} | learning rates: {learning_rates} | "
+        f"dropouts: {dropout_rates} | pooling: {pool_sizes} | "
+        f"combinaciones: {len(candidates)} | "
+        f"épocas máximas: {epochs} | "
         f"batch: {batch_size} | semilla: {seed}",
         flush=True,
     )
 
-    for index, learning_rate in enumerate(learning_rates, start=1):
+    for index, params in enumerate(candidates, start=1):
         # Reiniciar tanto la inicialización como la mezcla para cada candidato.
         tf.keras.backend.clear_session()
         tf.keras.utils.set_random_seed(seed)
@@ -140,32 +219,41 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         validation_dataset = make_dataset(
             splits["val"]["paths"], splits["val"]["labels"], batch_size,
         )
-        model = build_model(
-            dropout_rate=0.5, model_name="cnn_v2", learning_rate=learning_rate,
-        )
+        model = build_model(model_name="cnn_v2", **params)
         print(
-            f"\nCandidato {index}/{len(learning_rates)} | learning_rate={learning_rate:g}",
+            f"\nCandidato {index}/{len(candidates)} | "
+            f"learning_rate={params['learning_rate']:g} | "
+            f"dropout_rate={params['dropout_rate']:g} | "
+            f"pool_size={params['pool_size']} | parámetros={model.count_params():,}",
             flush=True,
         )
         history, epoch_weights = fit_candidate(
             model, train_dataset, validation_dataset, splits["val"]["labels"],
             epochs,
         )
-        valid = all(
+        valid = bool(history["loss"]) and all(
             np.isfinite(history[metric]).all()
             for metric in ("loss", "val_loss", "val_f1_macro")
         )
         result = {
-            "learning_rate": learning_rate,
+            **params,
             "best_val_f1_macro": None,
             "best_epoch": None,
             "epochs_run": len(history["loss"]),
             "valid": valid,
+            "num_parameters": model.count_params(),
         }
         if valid:
             best_index = int(np.argmax(history["val_f1_macro"]))
             result["best_val_f1_macro"] = float(history["val_f1_macro"][best_index])
             result["best_epoch"] = best_index + 1
+            print(
+                f"Ventana {params['pool_size']} | "
+                f"mejor F1 macro val={result['best_val_f1_macro']:.4f} | "
+                f"mejor época={result['best_epoch']} | "
+                f"épocas ejecutadas={result['epochs_run']} | "
+                f"parámetros={result['num_parameters']:,}", flush=True,
+            )
             if (
                 best_result is None
                 or result["best_val_f1_macro"] > best_result["best_val_f1_macro"]
@@ -177,13 +265,19 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         search_results.append(result)
         # No conservar los modelos ni las copias de pesos de los perdedores.
         del model, history, epoch_weights, train_dataset, validation_dataset
-
     if best_result is None:
-        raise RuntimeError("Ninguna tasa produjo un entrenamiento con valores finitos.")
+        raise RuntimeError(
+            "Ninguna ventana de pooling produjo un entrenamiento con valores finitos."
+        )
 
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_pooling_comparison(search_results, output_dir)
     print(
-        f"\nMejor tasa de aprendizaje entre las evaluadas: "
-        f"{best_result['learning_rate']:g} | "
+        f"\nMejor combinación entre las evaluadas: "
+        f"learning_rate={best_result['learning_rate']:g} | "
+        f"dropout_rate={best_result['dropout_rate']:g} | "
+        f"pool_size={best_result['pool_size']} | "
         f"F1 macro de validación: {best_result['best_val_f1_macro']:.4f} | "
         f"mejor época: {best_result['best_epoch']} | "
         f"épocas ejecutadas: {best_result['epochs_run']}",
@@ -191,8 +285,9 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
     )
     tf.keras.backend.clear_session()
     model = build_model(
-        dropout_rate=0.5, model_name="cnn_v2",
+        dropout_rate=best_result["dropout_rate"], model_name="cnn_v2",
         learning_rate=best_result["learning_rate"],
+        pool_size=best_result["pool_size"],
     )
     datasets = {
         name: make_dataset(data["paths"], data["labels"], batch_size)
@@ -210,8 +305,6 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         model.set_weights(best_epoch_weights[best_result["best_epoch"] - 1])
     del best_epoch_weights
 
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
     save_training_plots(best_history, output_dir, report_prefix="cnn_v2")
     metrics, matrices = save_final_reports(
         model, datasets, splits, class_names, output_dir, report_prefix="cnn_v2",
@@ -222,6 +315,8 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         "confusion_matrices": matrices, "class_names": class_names,
         "output_dir": output_dir,
         "best_learning_rate": best_result["learning_rate"],
+        "best_dropout_rate": best_result["dropout_rate"],
+        "best_pool_size": best_result["pool_size"],
         "search_results": search_results,
     }
 

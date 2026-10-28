@@ -38,6 +38,126 @@ una CNN para clasificar las 10 clases de automóviles.
    .\.venv\Scripts\python.exe src/main.py
    ```
 
+## GPU NVIDIA en Windows mediante WSL2
+
+Se conserva el código de TensorFlow/Keras. Ambas CNN usan automáticamente GPU
+si TensorFlow dispone de ella, o CPU en caso contrario, y muestran el dispositivo
+en consola. `main.py` ejecuta actualmente `train_model_v2()`.
+
+### Preparación (una sola vez)
+
+1. En PowerShell instala Ubuntu, si todavía no está disponible:
+
+   ```powershell
+   wsl --install -d Ubuntu-24.04
+   ```
+
+   Si la descarga falla con `WININET_E_TIMEOUT`, descarga la imagen WSL
+   directamente desde Ubuntu e instálala desde el archivo local en PowerShell:
+
+   ```powershell
+   curl.exe --fail --location --retry 2 --output "$env:TEMP\ccm-ubuntu-24.04.5-amd64.wsl" https://releases.ubuntu.com/24.04/ubuntu-24.04.5-wsl-amd64.wsl
+   Get-FileHash -Algorithm SHA256 "$env:TEMP\ccm-ubuntu-24.04.5-amd64.wsl"
+   ```
+
+   Compara el hash con la entrada de esa imagen en los
+   [SHA256 oficiales](https://releases.ubuntu.com/24.04/SHA256SUMS).
+   Si coincide, instala con:
+
+   ```powershell
+   wsl --install --from-file "$env:TEMP\ccm-ubuntu-24.04.5-amd64.wsl" --name Ubuntu-24.04 --no-launch
+   ```
+
+   Reinicia Windows si el instalador lo solicita. Abre Ubuntu con
+   `wsl -d Ubuntu-24.04` y completa la creación del usuario y contraseña Linux
+   si aparece el asistente. Comprueba con `wsl --list --verbose` en PowerShell
+   que Ubuntu utiliza la versión 2.
+
+2. En la terminal de Ubuntu instala Python y verifica el acceso a NVIDIA:
+
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y python3.12-venv python3-pip
+   nvidia-smi
+   ```
+
+   WSL utiliza el controlador NVIDIA instalado en Windows. No instales un
+   controlador de pantalla NVIDIA de Linux dentro de WSL.
+
+3. Desde Ubuntu entra en la carpeta del proyecto y crea un entorno independiente:
+
+   ```bash
+   cd '/mnt/c/Users/yaelc/Documents/CLASES_TEC/7MO SEMESTRE/MODULOS_AVANZADOS/MOD7_DP/CCM'
+   python3.12 -m venv ~/.venvs/ccm
+   source ~/.venvs/ccm/bin/activate
+   python -m pip install --upgrade pip
+   python -m pip install -r requirements-gpu.txt
+   python -m pip check
+   export LD_LIBRARY_PATH="$(printf '%s:' "$VIRTUAL_ENV"/lib/python3.12/site-packages/nvidia/*/lib)${LD_LIBRARY_PATH:-}"
+   ```
+
+   Ajusta la ruta si clonaste el proyecto en otra ubicación. El entorno se crea
+   en el sistema de archivos de Linux (`/home/yaelc/.venvs/ccm`), fuera del
+   repositorio y de su versionamiento. `.venv-wsl/` también está excluido de Git
+   para cubrir intentos anteriores; las listas de dependencias sí se versionan. No reutilices
+   `.venv/Scripts/python.exe`, pues pertenece a Windows. Tampoco instales
+   `requirements.txt` en este entorno: contiene TensorFlow exclusivo de CPU.
+   `requirements-common.txt` reúne las dependencias compartidas y
+   `requirements-gpu.txt` instala TensorFlow 2.21.0 con sus bibliotecas CUDA.
+
+4. Confirma que TensorFlow detecta una GPU:
+
+   ```bash
+   python -c "import tensorflow as tf; print(tf.__version__); print(tf.config.list_physical_devices('GPU'))"
+   ```
+
+   Debe aparecer al menos un `PhysicalDevice` de tipo `GPU`. Una lista vacía
+   indica que la aceleración no está disponible. La detección por sí sola no
+   garantiza que todos los kernels sean compatibles con la tarjeta; confirma
+   también una operación de convolución antes de un entrenamiento largo.
+
+### Activar el entorno y ejecutar main
+
+En PowerShell, abre Ubuntu:
+
+```powershell
+wsl -d Ubuntu-24.04
+```
+
+Después, en Ubuntu:
+
+```bash
+cd '/mnt/c/Users/yaelc/Documents/CLASES_TEC/7MO SEMESTRE/MODULOS_AVANZADOS/MOD7_DP/CCM'
+source ~/.venvs/ccm/bin/activate
+export LD_LIBRARY_PATH="$(printf '%s:' "$VIRTUAL_ENV"/lib/python3.12/site-packages/nvidia/*/lib)${LD_LIBRARY_PATH:-}"
+python src/main.py
+```
+
+Para ejecutar únicamente el entrenamiento con los datos ya preparados:
+
+```bash
+python src/models/cnn_v2.py
+# O la primera versión:
+python src/models/cnn_v1.py
+```
+
+Para salir del entorno: `deactivate`. Los reportes mantienen sus ubicaciones
+actuales y ejecutar el entrenamiento puede sobrescribir los PNG existentes.
+En VS Code abre el proyecto conectado a WSL y selecciona
+`/home/yaelc/.venvs/ccm/bin/python` como intérprete.
+
+### Diagnóstico
+
+- Si `venv` falla en `ensurepip` o muestra `Operation not permitted` dentro de
+  `/mnt/c`, crea el entorno en Linux con `python3.12 -m venv ~/.venvs/ccm` y
+  actívalo con `source ~/.venvs/ccm/bin/activate`. El proyecto puede permanecer
+  en su carpeta Windows. La carpeta `.venv-wsl` incompleta no se utiliza.
+- Si aparece `CPU`, revisa el intérprete activo con `which python`, ejecuta
+  `nvidia-smi` en Ubuntu y repite la consulta de dispositivos TensorFlow.
+- Si TensorFlow informa `Cannot dlopen some GPU libraries`, ejecuta el comando
+  `export LD_LIBRARY_PATH=...` de la sección de activación en esa terminal.
+  Añade al buscador de bibliotecas las rutas CUDA instaladas por pip en el entorno.
+
 ## Análisis de datos
 
 `src/main.py` ejecuta el análisis después de preparar el dataset. Para analizar
