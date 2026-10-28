@@ -392,6 +392,8 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
     # TensorFlow asigna automáticamente las operaciones compatibles a la GPU.
     device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
     tf.keras.utils.set_random_seed(seed)
+    # La semilla fija la aleatoriedad; el determinismo fija los cálculos.
+    tf.config.experimental.enable_op_determinism()
     splits, class_names = load_splits(input_dir, sets_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
