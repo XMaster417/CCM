@@ -180,6 +180,8 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             por combinación). Las épocas se numeran
             desde 1. Solo se exportan los PNG, no el diccionario.
     """
+    # Se aplica a toda la búsqueda; cada candidato reinicia su semilla.
+    tf.config.experimental.enable_op_determinism()
     learning_rates = tuple(learning_rates)
     dropout_rates = tuple(dropout_rates)
     pool_sizes = tuple(sorted(tuple(size) for size in pool_sizes))
