@@ -33,7 +33,7 @@ OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v1"
 IMAGE_SHAPE = (224, 224, 3)
 NUM_CLASSES = 10
 EPOCHS = 30
-PATIENCE = 5  # Épocas consecutivas sin reducir val_loss antes de detenerse.
+PATIENCE = 5  # Épocas consecutivas sin aumentar val_f1_macro antes de detenerse.
 BATCH_SIZE = 32
 SEED = 42
 SPLITS = ("train", "val", "test")
@@ -157,50 +157,65 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED)
         batch_size
     ).prefetch(1)
 
-def build_model():
+def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
+                pool_size=(4, 4)):
     """
     Construye y compila la CNN que recibe una imagen y clasifica su automóvil.
-    Recorrido por imagen:
+    Recorrido por imagen con stride 2 y padding same:
         Entrada:     224 x 224 x 3
-        Conv + pool:  56 x  56 x 16
-        Conv + pool:  14 x  14 x 32
-        Conv + pool:   4 x   4 x 64
-        Conv + pool:   1 x   1 x 128
-        Flatten:     128 valores
+        Conv + pool: 112 x 112 x 16
+        Conv + pool:  56 x  56 x 32
+        Conv + pool:  28 x  28 x 64
+        Conv + pool:  14 x  14 x 128
+        Flatten:     25,088 valores
         Dense ReLU:  128 valores
         Softmax:      10 probabilidades que suman aproximadamente 1
 
+    Args:
+        dropout_rate (float): Tasa de dropout después de Dense ReLU. Si es 0,
+            no se agrega la capa y se conserva la arquitectura original.
+        model_name (str): Nombre del modelo de Keras.
+        learning_rate (float): Tasa de aprendizaje de Adam, por defecto 0.001.
+        pool_size (tuple[int, int]): Ventana de max pooling en los cuatro
+            bloques, con stride 2 y padding same. Cambiarla conserva
+            el tamaño de Flatten y los parámetros de la capa Dense.
+
     Returns:
-        tf.keras.Sequential: Modelo compilado con Adam (0.001), pérdida
+        tf.keras.Sequential: Modelo compilado con Adam, pérdida
             SparseCategoricalCrossentropy y métrica de accuracy multiclase.
     """
     # Declarar la forma de cada imagen.
     layers = [tf.keras.layers.Input(shape=IMAGE_SHAPE)]
     
-    # Añadir cuatro bloques convolución 3x3 con ReLU y max pooling 4x4.
+    # Añadir cuatro bloques convolución 3x3 con ReLU y pooling configurable.
     for filters in (16, 32, 64, 128):
         layers.extend([
             tf.keras.layers.Conv2D(filters, 3, padding="same", activation="relu"),
-            tf.keras.layers.MaxPooling2D(pool_size=(4, 4), padding="same"),
+            tf.keras.layers.MaxPooling2D(
+                pool_size=pool_size, strides=2, padding="same",
+            ),
         ])
     
     # Aplanar, combinar características y producir probabilidades.
     layers.extend([
         tf.keras.layers.Flatten(),
         tf.keras.layers.Dense(128, activation="relu"),
-        tf.keras.layers.Dense(NUM_CLASSES, activation="softmax"),
     ])
+    if dropout_rate:
+        layers.append(tf.keras.layers.Dropout(dropout_rate))
+
+    layers.append(tf.keras.layers.Dense(NUM_CLASSES, activation="softmax"))
     
     # Encadenar las capas y definir cómo aprenderá el modelo.
-    model = tf.keras.Sequential(layers, name="cnn_v1")
+    model = tf.keras.Sequential(layers, name=model_name)
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
         loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
         metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
     )
     return model
 
-def save_training_plots(history, output_dir):
+def save_training_plots(history, output_dir, report_prefix="cnn_v1"):
     """
     Genera las curvas una sola vez, después de terminar el entrenamiento.
 
@@ -208,6 +223,7 @@ def save_training_plots(history, output_dir):
         history (dict): historia con loss, accuracy para val_ y test_. Train 
             es el promedio de los lotes durante la época.
         output_dir (str | Path): Carpeta existente para guardar PNG.
+        report_prefix (str): Prefijo de los archivos PNG.
     """
     output_dir = Path(output_dir)
     epochs = range(1, len(history["loss"]) + 1)
@@ -226,14 +242,38 @@ def save_training_plots(history, output_dir):
             ax.set_ylim(bottom=0)
         ax.grid(alpha=0.25)
         ax.legend()
-        save_figure(fig, output_dir, metric, prefix="cnn_v1")
+        save_figure(fig, output_dir, metric, prefix=report_prefix)
 
-def save_final_reports(model, datasets, splits, class_names, output_dir):
+def calculate_metrics(expected, predicted):
+    """
+    Calcula accuracy y métricas macro con el mismo criterio para los reportes
+    finales y el seguimiento de validación por época.
+
+    Args:
+        expected (np.ndarray): Etiquetas reales, de 0 a 9.
+        predicted (np.ndarray): Clases predichas mediante argmax, de 0 a 9.
+
+    Returns:
+        dict: accuracy, precision, recall y f1. Las métricas macro incluyen
+            las diez clases y asignan 0 cuando hay una división indefinida.
+    """
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        expected, predicted, labels=np.arange(NUM_CLASSES), average="macro",
+        zero_division=0,
+    )
+    return {
+        "accuracy": float(accuracy_score(expected, predicted)),
+        "precision": float(precision), "recall": float(recall), "f1": float(f1),
+    }
+
+
+def save_final_reports(model, datasets, splits, class_names, output_dir,
+                       report_prefix="cnn_v1"):
     """
     Calcula las métricas finales y genera cuatro reportes PNG.
 
-    Se ejecuta después de fit, cuando EarlyStopping ya restauró los mejores
-    pesos. Las curvas por época conservan los valores históricos originales.
+    Se ejecuta después de fit, cuando EarlyStopping ya restauró los pesos con
+    mayor F1 macro de validación. Las curvas conservan el historial original.
 
     Args:
         model (tf.keras.Model): Modelo entrenado.
@@ -242,6 +282,7 @@ def save_final_reports(model, datasets, splits, class_names, output_dir):
         splits (dict): Datos de load_splits, se utilizan sus labels reales.
         class_names (list[str]): Nombres de las clases en el orden 0 a 9.
         output_dir (str | Path): Carpeta existente para los cuatro PNG.
+        report_prefix (str): Prefijo de los archivos PNG.
 
     Returns:
         tuple[dict, dict]: metrics contiene accuracy, precision, recall y f1
@@ -259,14 +300,8 @@ def save_final_reports(model, datasets, splits, class_names, output_dir):
         predicted = probabilities.argmax(axis=1)
         expected = splits[name]["labels"]
 
-        # Comparar con las etiquetas reales. Macro da el mismo peso a cada clase
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            expected, predicted, labels=labels, average="macro", zero_division=0,
-        )
-        metrics[name] = {
-            "accuracy": float(accuracy_score(expected, predicted)),
-            "precision": float(precision), "recall": float(recall), "f1": float(f1),
-        }
+        # Calcula accuracy, precision, recall y f1 macro.
+        metrics[name] = calculate_metrics(expected, predicted)
         # Contar aciertos en la diagonal y errores fuera de la diagonal.
         # Los valores son cantidades de imágenes, no porcentajes.
         matrix = confusion_matrix(expected, predicted, labels=labels)
@@ -279,7 +314,7 @@ def save_final_reports(model, datasets, splits, class_names, output_dir):
             title=f"Matriz de confusión: {name} ({len(expected)} imágenes)",
             xlabel="Clase predicha", ylabel="Clase real",
         )
-        save_figure(fig, output_dir, f"confusion_{name}", prefix="cnn_v1")
+        save_figure(fig, output_dir, f"confusion_{name}", prefix=report_prefix)
 
     # Comparar los tres conjuntos en una gráfica de barras de cuatro métricas.
     metric_names = ("accuracy", "precision", "recall", "f1")
@@ -299,11 +334,38 @@ def save_final_reports(model, datasets, splits, class_names, output_dir):
     ax.set(ylim=(0, 1.15), ylabel="Valor", title="Métricas finales por conjunto")
     ax.legend()
     ax.grid(axis="y", alpha=0.25)
-    save_figure(fig, output_dir, "metrics", prefix="cnn_v1")
+    save_figure(fig, output_dir, "metrics", prefix=report_prefix)
     return metrics, matrices
 
-def train_model(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
-                epochs=EPOCHS, batch_size=BATCH_SIZE, seed=SEED):
+def print_final_metrics(metrics, output_dir):
+    """
+    Muestra las métricas finales por conjunto y la carpeta de las gráficas.
+
+    Los valores corresponden a los pesos con mayor F1 macro de validación.
+
+    Args:
+        metrics (dict): Accuracy, precision, recall y F1 macro por conjunto,
+            calculados con save_final_reports.
+        output_dir (str | Path): Carpeta donde se guardaron las gráficas PNG.
+    """
+    print(
+        "\nMétricas finales con los pesos de mayor F1 macro de validación "
+        "(precision, recall y F1 con promedio macro):",
+        flush=True,
+    )
+    for name, scores in metrics.items():
+        print(
+            f"  {name:5s} | accuracy: {scores['accuracy']:.2%} | "
+            f"precision: {scores['precision']:.4f} | recall: {scores['recall']:.4f} | "
+            f"F1-score: {scores['f1']:.4f}",
+            flush=True,
+        )
+    print(f"Gráficas guardadas en: {Path(output_dir).resolve()}", flush=True)
+
+
+def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
+                epochs=EPOCHS, batch_size=BATCH_SIZE, seed=SEED, *,
+                dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001):
     """
     Coordina la lectura de datos, el entrenamiento y los reportes de la CNN.
 
@@ -312,19 +374,23 @@ def train_model(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
         sets_dir (str | Path): Carpeta con los CSV de train, val y test.
         output_dir (str | Path): Carpeta para los resultados (imagenes).
         epochs (int): Máximo de número de épocas. EarlyStopping puede terminar 
-            antes si val_loss no mejora durante PATIENCE épocas.
+            antes si val_f1_macro no aumenta durante PATIENCE épocas.
         batch_size (int): Máximo de imágenes por lote, por defecto 32.
         seed (int): Semilla de inicialización y mezcla, por defecto 42.
+        dropout_rate (float): Tasa de dropout después de Dense ReLU; 0 lo omite.
+        model_name (str): Nombre del modelo y prefijo de sus reportes PNG.
+        learning_rate (float): Tasa de aprendizaje de Adam, por defecto 0.001.
 
     Returns:
-        dict: model (modelo con mejores pesos de validación), history
+        dict: model (modelo con mayor F1 macro de validación), history
             (dict de Keras con accuracy, loss, val_accuracy, val_loss,
-            test_accuracy y test_loss por época), metrics (métricas finales),
+            val_f1_macro, test_accuracy y test_loss por época), metrics
+            (métricas finales),
             confusion_matrices (matrices 10x10), class_names (orden de clases)
             y output_dir (Path). Solo se exportan los PNG, no el diccionario.
     """
-    # Usar CPU, fijar la semilla y validar metadatos, clases y rutas.
-    tf.config.set_visible_devices([], "GPU")
+    # TensorFlow asigna automáticamente las operaciones compatibles a la GPU.
+    device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
     tf.keras.utils.set_random_seed(seed)
     splits, class_names = load_splits(input_dir, sets_dir)
     output_dir = Path(output_dir)
@@ -341,67 +407,63 @@ def train_model(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
         shuffle=True, seed=seed,
     )
     
-    # Construir el modelo y los callbacks que acompañan cada época.
-    model = build_model()
-
-    def evaluate_test(epoch, logs):
-        """
-        Añade las métricas de test al History de Keras.
-
-        Args:
-            epoch (int): Índice de época proporcionado por Keras.
-            logs (dict): Métricas de la época que History guardará después.
-        """
-        scores = model.evaluate(datasets["test"], verbose=0, return_dict=True)
-        logs["test_loss"] = float(scores["loss"])
-        logs["test_accuracy"] = float(scores["accuracy"])
-
-    # Una mejora es una reducción de val_loss. Tras cinco épocas sin mejorar,
-    # detenerse y restaurar los pesos de la época con menor pérdida de val.
-    early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss", mode="min", patience=PATIENCE,
-        restore_best_weights=True, verbose=1,
+    model = build_model(
+        dropout_rate=dropout_rate, model_name=model_name,
+        learning_rate=learning_rate,
     )
     print(
-        f"Entrenamiento en CPU | épocas: {epochs} | batch: {batch_size} | "
+        f"Entrenamiento en {device} | épocas: {epochs} | batch: {batch_size} | "
         f"semilla: {seed}\nImágenes: "
         + ", ".join(f"{name}={len(data['labels'])}" for name, data in splits.items()),
         flush=True,
     )
 
-    # Keras registra train y val en History. El callback agrega únicamente
-    # test.
+    def evaluate_epoch_metrics(epoch, logs):
+        """
+        Registra F1 macro de validación antes de EarlyStopping y las métricas
+        de test. Solo el F1 de validación determina cuándo detenerse.
+
+        Args:
+            epoch (int): Índice de época proporcionado por Keras.
+            logs (dict): Métricas de la época que History guardará después.
+        """
+        # El dataset no se mezcla: argmax y etiquetas mantienen el mismo orden.
+        # Calcular F1 sobre toda la validación, no como promedio de los lotes.
+        probabilities = model.predict(datasets["val"], verbose=0)
+        logs["val_f1_macro"] = calculate_metrics(
+            splits["val"]["labels"], probabilities.argmax(axis=1),
+        )["f1"]
+        scores = model.evaluate(datasets["test"], verbose=0, return_dict=True)
+        logs["test_loss"] = float(scores["loss"])
+        logs["test_accuracy"] = float(scores["accuracy"])
+
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor="val_f1_macro", mode="max", patience=PATIENCE, min_delta=0,
+        restore_best_weights=True, verbose=1,
+    )
     history = model.fit(
         train_dataset, validation_data=datasets["val"], epochs=epochs,
-        callbacks=[tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_test),
-                   early_stopping],
+        callbacks=[
+            tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_epoch_metrics),
+            early_stopping,
+        ],
         shuffle=False, verbose=1,
     )
+    history = history.history
 
     # Generar el historial completo y los reportes finales.
-    save_training_plots(history.history, output_dir)
+    save_training_plots(history, output_dir, report_prefix=model_name)
     metrics, matrices = save_final_reports(
-        model, datasets, splits, class_names, output_dir,
+        model, datasets, splits, class_names, 
+        output_dir, report_prefix=model_name,
     )
-    print(
-        "\nMétricas finales con los mejores pesos de validación "
-        "(precision, recall y F1 con promedio macro):",
-        flush=True,
-    )
-    for name, scores in metrics.items():
-        print(
-            f"  {name:5s} | accuracy: {scores['accuracy']:.2%} | "
-            f"precision: {scores['precision']:.4f} | recall: {scores['recall']:.4f} | "
-            f"F1-score: {scores['f1']:.4f}",
-            flush=True,
-        )
-    print(f"Gráficas guardadas en: {output_dir.resolve()}", flush=True)
+    print_final_metrics(metrics, output_dir)
 
     return {
-        "model": model, "history": history.history, "metrics": metrics,
+        "model": model, "history": history, "metrics": metrics,
         "confusion_matrices": matrices, "class_names": class_names,
         "output_dir": output_dir,
     }
 
 if __name__ == "__main__":
-    train_model()
+    train_model_v1()

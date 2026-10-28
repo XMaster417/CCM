@@ -1,0 +1,3 @@
+# Instalar solo dentro de Linux/WSL2, en un entorno separado del de Windows.
+-r requirements-common.txt
+tensorflow[and-cuda]==2.21.0
