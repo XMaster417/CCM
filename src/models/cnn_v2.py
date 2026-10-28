@@ -1,4 +1,4 @@
-"""Compara ventanas de max pooling por F1 macro de validación."""
+"""Compara configuraciones por F1 macro de validación y exporta reportes PNG."""
 
 from pathlib import Path
 import sys
@@ -178,7 +178,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             best_dropout_rate (float), best_pool_size (tuple[int, int]) y
             search_results (hiperparámetros, F1, épocas y num_parameters
             por combinación). Las épocas se numeran
-            desde 1. Solo se exportan los PNG, no el diccionario.
+            desde 1. Solo se exportan los reportes PNG.
     """
     # Se aplica a toda la búsqueda; cada candidato reinicia su semilla.
     tf.config.experimental.enable_op_determinism()

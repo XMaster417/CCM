@@ -198,6 +198,41 @@ pares, por lo que esa etapa tiene costo cuadrático. Los indicadores de calidad
 se calculan en gris sobre miniaturas de hasta 256 píxeles por lado; dependen
 también del fondo y las texturas y no justifican descartar imágenes automáticamente.
 
+## Preprocesamiento a 320×320 y augmentación
+
+El tamaño se define en `src/scripts/transform_data.py` con `IMAGE_SIZE = 320`.
+Cada imagen se lee desde `data/raw/` y se ajusta directamente a 320×320 sin
+desenfoque gaussiano, conservando corrección EXIF, RGB, proporciones,
+interpolación LANCZOS y relleno negro centrado. Se mantiene JPEG con calidad 95
+y sin submuestreo de color en `data/processed/`.
+
+La augmentación conserva las dimensiones recibidas y añade variantes solo a
+train. Las imágenes y los metadatos necesarios para entrenar se guardan en
+`data/augmented/images/` y `data/augmented/sets/`. Los conteos se muestran
+únicamente en consola; la augmentación no genera reportes en `public/`.
+
+```text
+data/raw/ → ajuste directo a 320×320, sin desenfoque → data/processed/
+         → augmentación a 320×320 → data/augmented/ → CNN v2
+```
+
+Ambas CNN toman su entrada del tamaño del preprocesamiento: `(320, 320, 3)`.
+La normalización sigue siendo `float32` entre 0 y 1. Con la arquitectura actual,
+`Flatten` tiene 51,200 valores y el modelo completo tiene 6,652,458 parámetros.
+
+Para regenerar desde los originales, conservando los splits existentes y sin
+entrenar ni generar nuevos reportes en `public/`:
+
+```powershell
+.\env\Scripts\python.exe -c "import sys; sys.path.insert(0, 'src'); from scripts.transform_data import transform_dataset; from scripts.data_augmentation import augment_dataset; transform_dataset(); augment_dataset()"
+```
+
+Ajusta el intérprete a tu entorno (`env`, `.venv` o `python` dentro de WSL).
+La regeneración sustituye las imágenes procesadas anteriores a partir de los
+originales de `data/raw/`; no amplía las versiones ya reducidas a 224×224.
+En una primera ejecución, `main.py` prepara los splits antes de la augmentación
+y después inicia el entrenamiento con las rutas del dataset aumentado.
+
 ## División del dataset
 
 Después de la transformación, `src/main.py` divide `data/processed` en train
@@ -221,10 +256,10 @@ Una nueva ejecución actualiza los CSV y PNG generados.
 
 La entrada debe contener `metadata.csv` con el mismo esquema que el procesado
 y las imágenes referenciadas. Configura las rutas y la semilla en las constantes
-al inicio de `src/scripts/split_data.py`. Por ejemplo, para usar `data/augmented`:
+al inicio de `src/scripts/split_data.py`:
 
 ```python
-INPUT_DIR = ROOT / "data" / "augmented"
+INPUT_DIR = ROOT / "data" / "processed"
 SETS_DIR = ROOT / "data" / "sets"
 SEED = 42
 ```

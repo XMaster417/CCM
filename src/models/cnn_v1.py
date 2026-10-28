@@ -21,7 +21,7 @@ from sklearn.metrics import (
 # Añadir src a las rutas de importación para reutilizar las funciones de scripts.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.data_analysis import save_figure
-from scripts.transform_data import load_normalized_image
+from scripts.transform_data import IMAGE_SIZE, load_normalized_image
 
 # Definir dónde leer las imágenes y los conjuntos, y dónde guardar los PNG.
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +30,7 @@ SETS_DIR = ROOT / "data" / "sets"
 OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v1"
 
 # Configurar la entrada (alto, ancho, canales), las clases y el entrenamiento.
-IMAGE_SHAPE = (224, 224, 3)
+IMAGE_SHAPE = (IMAGE_SIZE, IMAGE_SIZE, 3)
 NUM_CLASSES = 10
 EPOCHS = 30
 PATIENCE = 5  # Épocas consecutivas sin aumentar val_f1_macro antes de detenerse.
@@ -101,7 +101,7 @@ def _load_image(path):
             tf.numpy_function.
 
     Returns:
-        np.ndarray: Imagen float32 de forma (224, 224, 3), con píxeles
+        np.ndarray: Imagen float32 de forma IMAGE_SHAPE (320, 320, 3), con píxeles
             normalizados entre 0 y 1.
     """
     # Extraer el valor si TensorFlow lo entrega dentro de un array de NumPy.
@@ -126,7 +126,7 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED)
 
     Returns:
         tf.data.Dataset: Lotes (imágenes, etiquetas), con formas 
-            (N, 224, 224, 3) y (N,).
+            (N, IMAGE_SIZE, IMAGE_SIZE, 3) y (N,).
     """
     # Emparejar cada ruta con su etiqueta, aún no se leen los píxeles.
     dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
@@ -144,7 +144,7 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED)
             label (tf.Tensor): Etiqueta escalar de tipo int32.
 
         Returns:
-            tuple[tf.Tensor, tf.Tensor]: Imagen float32 (224, 224, 3) y su
+            tuple[tf.Tensor, tf.Tensor]: Imagen float32 de forma IMAGE_SHAPE y su
                 etiqueta original.
         """
         # Ejecutar la función de NumPy/Pillow dentro del flujo de TensorFlow.
@@ -162,12 +162,12 @@ def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
     """
     Construye y compila la CNN que recibe una imagen y clasifica su automóvil.
     Recorrido por imagen con stride 2 y padding same:
-        Entrada:     224 x 224 x 3
-        Conv + pool: 112 x 112 x 16
-        Conv + pool:  56 x  56 x 32
-        Conv + pool:  28 x  28 x 64
-        Conv + pool:  14 x  14 x 128
-        Flatten:     25,088 valores
+        Entrada:     320 x 320 x 3
+        Conv + pool: 160 x 160 x 16
+        Conv + pool:  80 x  80 x 32
+        Conv + pool:  40 x  40 x 64
+        Conv + pool:  20 x  20 x 128
+        Flatten:     51,200 valores
         Dense ReLU:  128 valores
         Softmax:      10 probabilidades que suman aproximadamente 1
 
