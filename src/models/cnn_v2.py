@@ -29,64 +29,57 @@ from scripts.data_analysis import plt, save_figure
 OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v2"
 LEARNING_RATES = (0.001,)
 DROPOUT_RATES = (0.5,)
-# Appasami y Savarimuthu (2025), sección 4.1:
-# https://doi.org/10.1007/s10791-025-09603-4
-POOL_SIZES = tuple((size, size) for size in range(2, 10))
+POOL_SIZES = ((3, 3), )
 
+def save_hyperparameter_comparisons(search_results, output_dir):
+    """Guarda las cinco mejores combinaciones por valor de cada parámetro variable.
 
-def save_pooling_comparison(search_results, output_dir):
-    """Exporta F1 de validación y diferencia frente a 4x4 para cada candidato.
-
-    Con stride 2 y padding same, las ventanas conservan el tamaño de Flatten
-    y el número de parámetros de Dense.
-    Si la referencia no es válida o no fue evaluada, su diferencia no se calcula.
+    Cada hiperparámetro variable actualiza su propia imagen. Las comparaciones
+    de parámetros fijos se conservan sin cambios. Cada panel muestra un valor,
+    ordenando sus candidatos válidos por F1 macro de validación descendente.
+    Si hay menos de cinco candidatos válidos, muestra solo los disponibles.
+    Las etiquetas incluyen toda la configuración y el número de parámetros.
     """
-    fig, (scores_ax, delta_ax) = plt.subplots(2, 1, figsize=(12, 10))
-    positions = np.arange(len(search_results))
-    labels = [
-        f"{r['pool_size'][0]}×{r['pool_size'][1]}\n"
-        f"lr={r['learning_rate']:g}\ndropout={r['dropout_rate']:g}\n"
-        f"{r['num_parameters']:,} parámetros"
-        for r in search_results
-    ]
-    scores = [
-        r['best_val_f1_macro'] if r['valid'] else np.nan
-        for r in search_results
-    ]
-    bars = scores_ax.bar(positions, scores, color="#3679ac")
-    scores_ax.bar_label(bars, fmt="%.4f", padding=3)
-    scores_ax.set(ylim=(0, 1.12), ylabel="Mejor F1 macro de validación",
-                  title="Comparación de ventanas de max pooling")
-    deltas = []
-    for result in search_results:
-        baseline = next((
-            r for r in search_results
-            if r['pool_size'] == (4, 4) and r['valid']
-            and r['learning_rate'] == result['learning_rate']
-            and r['dropout_rate'] == result['dropout_rate']
-        ), None)
-        deltas.append(
-            result['best_val_f1_macro'] - baseline['best_val_f1_macro']
-            if result['valid'] and baseline is not None else np.nan
-        )
-    bars = delta_ax.bar(positions, deltas, color="#47956a")
-    delta_ax.bar_label(bars, fmt="%+.4f", padding=3)
-    delta_ax.axhline(0, color="black", linewidth=0.8)
-    delta_ax.margins(y=0.25)
-    delta_ax.set(ylabel="Diferencia de F1 frente a 4×4",
-                 xlabel="Ventana y configuración (NA: candidato o referencia no válidos)")
-    for index, (score, delta) in enumerate(zip(scores, deltas)):
-        if not np.isfinite(score):
-            scores_ax.text(index, 0.02, "NA", ha="center")
-        if not np.isfinite(delta):
-            delta_ax.annotate("NA", (index, 0), ha="center", xytext=(0, 5),
-                              textcoords="offset points")
-    for ax in (scores_ax, delta_ax):
-        ax.set_xticks(positions, labels, fontsize=8)
-        ax.grid(axis="y", alpha=0.25)
-    fig.suptitle("Stride 2 y padding same: todas las ventanas producen "
-                 "las mismas dimensiones y número de parámetros.", fontsize=10)
-    save_figure(fig, output_dir, "pooling_comparison", prefix="cnn_v2")
+    comparisons = (
+        ("pool_size", "pooling", "ventanas de max pooling"),
+        ("dropout_rate", "dropout", "tasas de dropout"),
+        ("learning_rate", "learning", "tasas de aprendizaje"),
+    )
+    for parameter, filename, title in comparisons:
+        values = sorted({result[parameter] for result in search_results})
+        if len(values) <= 1:
+            continue
+        fig, axes = plt.subplots(len(values), 1, figsize=(12, 4 * len(values)))
+        fig.suptitle(f"Comparación de {title}: hasta 5 mejores por valor")
+        for ax, value in zip(axes, values):
+            candidates = sorted(
+                (r for r in search_results
+                 if r[parameter] == value and r['valid']
+                 and r['best_val_f1_macro'] is not None
+                 and np.isfinite(r['best_val_f1_macro'])),
+                key=lambda r: r['best_val_f1_macro'], reverse=True,
+            )[:5]
+            positions = np.arange(len(candidates))
+            labels = [
+                f"{r['pool_size'][0]}×{r['pool_size'][1]}\n"
+                f"lr={r['learning_rate']:g}\ndropout={r['dropout_rate']:g}\n"
+                f"{r['num_parameters']:,} parámetros"
+                for r in candidates
+            ]
+            scores = [r['best_val_f1_macro'] for r in candidates]
+            bars = ax.bar(positions, scores, color="#3679ac")
+            ax.bar_label(bars, fmt="%.4f", padding=3)
+            value_label = (f"{value[0]}×{value[1]}" if parameter == "pool_size"
+                           else f"{value:g}")
+            ax.set(ylim=(0, 1.12), ylabel="Mejor F1 macro de validación",
+                   xlabel="Configuración", title=f"{parameter} = {value_label}")
+            if not candidates:
+                ax.text(0.5, 0.5, "Sin candidatos válidos", ha="center",
+                        transform=ax.transAxes)
+            ax.set_xticks(positions, labels, fontsize=8)
+            ax.grid(axis="y", alpha=0.25)
+        fig.tight_layout(rect=(0, 0, 1, 0.97))
+        save_figure(fig, output_dir, f"{filename}_comparison", prefix="cnn_v2")
 
 def fit_candidate(model, train_dataset, validation_dataset, validation_labels,
                   epochs=EPOCHS):
@@ -272,7 +265,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    save_pooling_comparison(search_results, output_dir)
+    save_hyperparameter_comparisons(search_results, output_dir)
     print(
         f"\nMejor combinación entre las evaluadas: "
         f"learning_rate={best_result['learning_rate']:g} | "
