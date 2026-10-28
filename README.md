@@ -146,6 +146,20 @@ actuales y ejecutar el entrenamiento puede sobrescribir los PNG existentes.
 En VS Code abre el proyecto conectado a WSL y selecciona
 `/home/yaelc/.venvs/ccm/bin/python` como intérprete.
 
+### Repetibilidad del entrenamiento
+
+Ambas CNN activan `tf.config.experimental.enable_op_determinism()` y fijan
+la semilla con `tf.keras.utils.set_random_seed(seed)` (42 por defecto).
+La CNN v2 reinicia la semilla antes de entrenar cada candidato. Esto permite
+repetir los resultados con los mismos datos, hiperparámetros, dispositivo y
+entorno de software. No garantiza resultados idénticos entre CPU y GPU ni
+entre versiones distintas de las dependencias.
+
+El determinismo puede reducir la velocidad de entrenamiento. Si una operación
+no dispone de implementación determinista, TensorFlow puede lanzar
+`UnimplementedError`. La configuración se aplica tanto desde `main.py` como
+al ejecutar cada CNN directamente.
+
 ### Diagnóstico
 
 - Si `venv` falla en `ensurepip` o muestra `Operation not permitted` dentro de
