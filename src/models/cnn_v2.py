@@ -30,7 +30,7 @@ OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v2"
 LEARNING_RATES = (0.001,)
 DROPOUT_RATES = (0.5,)
 POOL_SIZES = ((3, 3), )
-L2_RATES = (1e-4)
+L2_RATES = (1e-4,)
 
 def save_hyperparameter_comparisons(search_results, output_dir):
     """Guarda las cinco mejores combinaciones por valor de cada parámetro variable.
