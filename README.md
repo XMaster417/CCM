@@ -2,7 +2,8 @@
 
 Descarga el dataset [Car Model Image Classification](https://www.kaggle.com/datasets/lightangle/car-model-image-classification)
 en `data/raw/`, realiza el análisis y preprocesamiento, divide los datos y entrena
-una CNN para clasificar las 10 clases de automóviles.
+una línea base de EfficientNet-B0 con pesos ImageNet congelados para clasificar
+las 10 clases de automóviles.
 
 ## Requisitos
 
@@ -40,9 +41,10 @@ una CNN para clasificar las 10 clases de automóviles.
 
 ## GPU NVIDIA en Windows mediante WSL2
 
-Se conserva el código de TensorFlow/Keras. Ambas CNN usan automáticamente GPU
+Se conserva el código de TensorFlow/Keras. Los modelos usan automáticamente GPU
 si TensorFlow dispone de ella, o CPU en caso contrario, y muestran el dispositivo
-en consola. `main.py` ejecuta actualmente `train_model_v2()`.
+en consola. `main.py` ejecuta actualmente `train_efficientnet_b0()` sobre
+`data/augmented/images`, con augmentación fija generada antes de entrenar.
 
 ### Preparación (una sola vez)
 
@@ -139,6 +141,8 @@ Para ejecutar únicamente el entrenamiento con los datos ya preparados:
 python src/models/cnn_v2.py
 # O la primera versión:
 python src/models/cnn_v1.py
+# O la nueva línea base preentrenada (también ejecutada por main.py):
+python src/models/efficientnet_b0.py
 ```
 
 Para salir del entorno: `deactivate`. Los reportes mantienen sus ubicaciones
@@ -235,6 +239,22 @@ pares, por lo que esa etapa tiene costo cuadrático. Los indicadores de calidad
 se calculan en gris sobre miniaturas de hasta 256 píxeles por lado; dependen
 también del fondo y las texturas y no justifican descartar imágenes automáticamente.
 
+## Limpieza visual del dataset
+
+Se revisaron visualmente algunas imagenes originales de BMW M3, BMW M5, Chevrolet Camaro y
+Ford Mustang, en sus conjuntos de entrenamiento y validación. A partir de esa revisión
+se eliminaron **101 originales**: 20 fotografías de interiores, 25 imágenes de
+LEGO (incluidas piezas) y 56 anuncios. La limpieza se limita a los casos
+identificados en esas cuatro clases, otras miniaturas, renders, detalles y
+etiquetas dudosas siguen pendientes de revisión.
+
+| Conjunto | Originales antes | Originales después | Entradas después en `data/augmented` |
+|---|---:|---:|---:|
+| Train | 1,446 | 1,360 | 2,720 |
+| Validación | 310 | 295 | 295 |
+| Test | 310 | 310 | 310 |
+| Total | 2,066 | 1,965 | 3,325 |
+
 ## Preprocesamiento a 320×320 y augmentación
 
 El tamaño se define en `src/scripts/transform_data.py` con `IMAGE_SIZE = 320`.
@@ -250,7 +270,7 @@ train. Las imágenes y los metadatos necesarios para entrenar se guardan en
 
 ```text
 data/raw/ → ajuste directo a 320×320, sin desenfoque → data/processed/
-         → augmentación a 320×320 → data/augmented/ → CNN v2
+         → augmentación fija a 320×320 → data/augmented/ → EfficientNet-B0
 ```
 
 Ambas CNN toman su entrada del tamaño del preprocesamiento: `(320, 320, 3)`.
@@ -267,8 +287,93 @@ entrenar ni generar nuevos reportes en `public/`:
 Ajusta el intérprete a tu entorno (`env`, `.venv` o `python` dentro de WSL).
 La regeneración sustituye las imágenes procesadas anteriores a partir de los
 originales de `data/raw/`; no amplía las versiones ya reducidas a 224×224.
-En una primera ejecución, `main.py` prepara los splits antes de la augmentación
-y después inicia el entrenamiento con las rutas del dataset aumentado.
+`main.py` prepara los splits, genera la augmentación fija y entrena EfficientNet-B0
+con `data/augmented`. Las CNN anteriores pueden ejecutarse por separado.
+
+## Línea base de EfficientNet-B0
+
+`src/models/efficientnet_b0.py` utiliza `tf.keras.applications.EfficientNetB0`
+con pesos de ImageNet, `include_top=False` y la base congelada en la primera etapa.
+También llama la base con `training=False` para conservar las estadísticas de
+BatchNormalization y desactivar la aleatoriedad interna de la base. Primero aprende
+el clasificador: `GlobalAveragePooling2D → Dropout(0.5) → Dense(n_clases, softmax)`.
+Las clases se infieren de train en orden alfabético; actualmente son diez y el
+clasificador tiene 12,810 parámetros entrenables. Después ajusta `block7a_*` y
+`top_conv` durante un máximo de 10 épocas con learning rate `1e-5`, manteniendo
+BatchNormalization congelada. Conserva los mejores pesos entre ambas etapas
+según F1 macro de validación; `fine_tune_epochs=0` omite el ajuste parcial.
+
+La entrada por defecto es `data/augmented/images`, con los CSV existentes en
+`data/augmented/sets/{train,val,test}/metadata.csv`. Train contiene originales
+y variantes fijas; val y test conservan solo originales. No se vuelven a dividir los datos al
+ejecutar únicamente este modelo. Los CSV deben contener `class` y `path`, con
+rutas relativas a la carpeta de imágenes, las mismas clases en los tres
+conjuntos y ninguna ruta repetida dentro de un conjunto o entre conjuntos.
+
+Aunque las imágenes procesadas son de 320×320, el cargador las ajusta a
+**224×224** con interpolación bilineal, antialias y relleno negro para conservar
+proporciones. No modifica los archivos ni aplica augmentación. A diferencia de
+las CNN anteriores, entrega RGB `float32` en **[0, 255]**, sin dividir por 255:
+EfficientNet ya incorpora su normalización. Tampoco se usa
+`load_normalized_image` ni se añade otra capa de reescalado.
+Consulta la [documentación de EfficientNet de Keras](https://keras.io/api/applications/efficientnet/)
+y la [guía de transferencia de aprendizaje](https://keras.io/guides/transfer_learning/).
+
+La configuración inicial es Adam con learning rate `0.001`, batch `32`, máximo
+`30` épocas y semilla `42`. Usa `SparseCategoricalCrossentropy` y accuracy;
+calcula F1 macro de toda la validación al terminar cada época. EarlyStopping
+restaura los pesos de mayor F1 macro de validación después de cinco épocas sin
+mejora; si hay empate conserva la primera. Al terminar cada época también se
+evalúa test para registrar `test_loss` y `test_accuracy` y mostrarlos junto con
+train y val en las curvas. Estas métricas quedan en el historial devuelto por
+la función; la selección de pesos sigue usando únicamente F1 macro de validación.
+Los reportes finales evalúan los pesos seleccionados. Una pérdida o predicción de validación no finita
+interrumpe la ejecución sin exportar un modelo de esa ejecución.
+
+### Ejecutar y cambiar el conjunto
+
+Para entrenar solo EfficientNet sobre los datos aumentados ya preparados:
+
+```powershell
+.\env\Scripts\python.exe src/models/efficientnet_b0.py
+```
+
+Dentro de WSL, con el entorno activado: `python src/models/efficientnet_b0.py`.
+La primera ejecución necesita conexión para descargar los pesos oficiales de
+ImageNet si todavía no están en la caché de Keras. No hay fallback a pesos
+aleatorios. `python src/main.py` ejecuta antes toda la preparación de datos.
+
+Para otro conjunto, cambia las constantes al inicio del archivo o pasa las
+rutas a la función desde Python, teniendo `src` en la ruta de importación:
+
+```python
+from models.efficientnet_b0 import train_efficientnet_b0
+
+result = train_efficientnet_b0(
+    input_dir="data/mi_dataset/images",
+    sets_dir="data/mi_dataset/sets",
+    output_dir="public/images/efficientnet_b0_mi_dataset",
+    artifacts_dir="public/models",
+    epochs=30,
+    batch_size=32,
+    learning_rate=0.001,
+    dropout_rate=0.5,
+    patience=5,
+    seed=42,
+    image_size=224,
+)
+```
+
+El modelo se guarda directamente en `public/models/efficientnet.keras`, sin
+crear una subcarpeta del modelo ni generar un archivo JSON. Una nueva ejecución
+en la misma carpeta sustituye ese archivo. El historial, las clases, la
+configuración y las métricas siguen disponibles en el diccionario `result`.
+
+El conjunto aumentado existente se usa por defecto. Para generarlo a partir de
+los datos procesados y splits existentes, ejecuta `python src/scripts/data_augmentation.py`.
+EfficientNet reutiliza esas imágenes sin aplicar augmentación dinámica.
+Cambiar el dataset o sus splits no ejecuta ninguna
+búsqueda automática de hiperparámetros.
 
 ## División del dataset
 

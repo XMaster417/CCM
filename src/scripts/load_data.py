@@ -1,8 +1,11 @@
 """Descarga el dataset de autos y guarda una muestra de imágenes locales."""
 
+import csv
 import json
+import os
 import random
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from tempfile import NamedTemporaryFile
 
 import kagglehub
 import matplotlib
@@ -18,6 +21,68 @@ PREVIEW_PATH = ROOT / "public" / "images" / "eda" / "preview.png"
 MARKER = ROOT / "data" / ".car_dataset_complete.json"
 DATASET = "lightangle/car-model-image-classification"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+EXCLUSIONS_FILE = Path(__file__).with_name("excluded_images.txt")
+
+
+def remove_excluded_images(raw_dir=RAW_DIR, exclusions_file=EXCLUSIONS_FILE):
+    """Retira de raw las imágenes revisadas y sus filas de metadata.csv.
+
+    Valida toda la lista antes de modificar archivos. Las rutas son relativas
+    a raw (clase/archivo); los archivos ya ausentes se omiten para permitir
+    repetir la limpieza. Devuelve los conteos de archivos y filas eliminados.
+    """
+    raw_dir = Path(raw_dir).resolve()
+    excluded = set()
+    targets = []
+    for line in Path(exclusions_file).read_text(encoding="utf-8-sig").splitlines():
+        relative = line.strip()
+        if not relative or relative.startswith("#"):
+            continue
+        parts = PurePosixPath(relative).parts
+        if (len(parts) != 2 or any(part in {".", ".."} for part in parts)
+                or "\\" in relative or ":" in relative
+                or PurePosixPath(relative).is_absolute()
+                or PurePosixPath(relative).as_posix() != relative):
+            raise ValueError(f"Ruta de exclusión inválida: {relative}")
+        target = raw_dir.joinpath(*parts)
+        excluded.add(relative)
+        targets.append(target)
+
+    metadata_path = raw_dir / "metadata.csv"
+    with metadata_path.open(encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+        columns = reader.fieldnames
+        if not columns or not {"class", "filename"}.issubset(columns):
+            raise ValueError("metadata.csv requiere las columnas class y filename")
+        rows = list(reader)
+    kept = [row for row in rows
+            if f"{row['class']}/{row['filename']}" not in excluded]
+    removed_rows = len(rows) - len(kept)
+
+    temporary = None
+    removed_files = 0
+    try:
+        if removed_rows:
+            with NamedTemporaryFile(mode="w", encoding="utf-8-sig", newline="",
+                                    dir=raw_dir, prefix=".metadata_", suffix=".tmp",
+                                    delete=False) as destination:
+                temporary = Path(destination.name)
+                writer = csv.DictWriter(destination, fieldnames=columns)
+                writer.writeheader()
+                writer.writerows(kept)
+        for target in targets:
+            if target.is_file():
+                target.unlink()
+                removed_files += 1
+        if temporary is not None:
+            os.replace(temporary, metadata_path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+    print(f"Limpieza de raw: {removed_files} imágenes y "
+          f"{removed_rows} filas de metadatos eliminadas.", flush=True)
+    return {"removed_files": removed_files, "removed_rows": removed_rows}
 
 
 def find_images():
@@ -40,7 +105,7 @@ def find_images():
 
 def download_data():
     """
-    Reutiliza o descarga el dataset de imagenes.
+    Reutiliza o descarga el dataset y aplica las exclusiones visuales de raw.
 
     Crea la carpeta destino, si es que no existe, verifica si existe no existe
     el contenido a descargar y lo descarga, si existe no hace nada.
@@ -76,6 +141,8 @@ def download_data():
         MARKER.write_text(json.dumps({"dataset": DATASET}), encoding="utf-8")
     else:
         print("Reutilizando la descarga local completada.")
+    remove_excluded_images()
+    images = find_images()
     print(f"Datos: {RAW_DIR}\nImágenes encontradas: {len(images)}")
     return images
 
