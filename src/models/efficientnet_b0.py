@@ -35,7 +35,7 @@ IMAGE_SIZE = 224
 EPOCHS = 30
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
-FINE_TUNE_EPOCHS = 10
+FINE_TUNE_EPOCHS = 15
 FINE_TUNE_LEARNING_RATE = 0.00001
 DROPOUT_RATE = 0.5
 PATIENCE = 5
@@ -189,11 +189,12 @@ def build_model(num_classes, learning_rate=LEARNING_RATE,
 
 
 def _configure_fine_tuning(model, learning_rate):
+    """Ajusta juntos los bloques 6 y 7 y top_conv, con BatchNormalization fija."""
     backbone = model.get_layer("efficientnetb0")
     backbone.trainable = True
     for layer in backbone.layers:
         layer.trainable = (
-            layer.name.startswith("block7a_") or layer.name == "top_conv"
+            layer.name.startswith(("block6", "block7a_")) or layer.name == "top_conv"
         ) and not isinstance(layer, tf.keras.layers.BatchNormalization)
     _compile_model(model, learning_rate)
 
