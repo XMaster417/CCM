@@ -1,8 +1,7 @@
-"""Descarga, analiza, transforma, divide, aumenta y entrena la CNN de automóviles."""
+"""Prepara los datos y entrena EfficientNet con augmentación dinámica de train."""
 
 from models.cnn_v1 import train_model_v1
 from models.cnn_v2 import train_model_v2
-from scripts.data_augmentation import augment_dataset
 from models.efficientnet_b0 import train_efficientnet_b0
 from scripts.data_analysis import analyze_dataset
 from scripts.load_data import download_data, preview_images
@@ -36,11 +35,7 @@ def main():
 # ------------------------------------------------------------------------------
     split_dataset()
 # ------------------------------------------------------------------------------
-# Aumentar solo train y conservar los conjuntos de validación y test
-# ------------------------------------------------------------------------------
-    augmented = augment_dataset()
-# ------------------------------------------------------------------------------
-# Entrenamiento y evaluación de EfficientNet-B0
+# Entrenamiento con augmentación dinámica y evaluación de EfficientNet-B0
 # ------------------------------------------------------------------------------
     train_efficientnet_b0()
 

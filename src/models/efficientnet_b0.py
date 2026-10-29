@@ -1,8 +1,8 @@
-"""Línea base de EfficientNet-B0 con ImageNet congelada y clasificador softmax.
+"""EfficientNet-B0 con augmentación dinámica de train y fine tuning parcial.
 
-Solo aprende la cabeza GAP -> Dropout -> Dense. Las imágenes se cargan en
-RGB, a 224x224 y en [0, 255]: EfficientNet incorpora su propia normalización.
-Los benchmarks consultados y las adaptaciones se describen en README.md.
+Primero aprende la cabeza GAP -> Dropout -> Dense y opcionalmente ajusta la base.
+Las imágenes procesadas se cargan en RGB, a 224x224 y en [0, 255]: EfficientNet
+incorpora su propia normalización. La evaluación no aplica augmentación.
 """
 
 from pathlib import Path
@@ -27,17 +27,22 @@ from scripts.data_analysis import save_figure
 
 
 ROOT = Path(__file__).resolve().parents[2]
-INPUT_DIR = ROOT / "data" / "augmented" / "images"
-SETS_DIR = ROOT / "data" / "augmented" / "sets"
+INPUT_DIR = ROOT / "data" / "processed"
+SETS_DIR = ROOT / "data" / "sets"
 OUTPUT_DIR = ROOT / "public" / "images" / "efficientnet_b0"
 ARTIFACTS_DIR = ROOT / "public" / "models"
 IMAGE_SIZE = 224
 EPOCHS = 30
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
+FINE_TUNE_EPOCHS = 10
+FINE_TUNE_LEARNING_RATE = 0.00001
 DROPOUT_RATE = 0.5
 PATIENCE = 5
 SEED = 42
+MAX_ROTATION_DEGREES = 5.0
+MAX_SHIFT_FRACTION = 0.03
+CONTRAST_FACTOR = 0.1
 SPLITS = ("train", "val", "test")
 COLORS = {"train": "#3679ac", "val": "#d98735", "test": "#47956a"}
 
@@ -92,6 +97,7 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED,
     """Carga RGB float32 en [0, 255], sin dividir por 255 ni augmentar.
 
     Ajusta con padding negro para conservar proporciones; no altera los archivos.
+    La augmentación se aplica dentro del modelo, únicamente al entrenar.
     Solo train debe mezclarse para mantener alineadas predicciones y etiquetas
     durante la evaluación de los conjuntos.
 
@@ -142,9 +148,40 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED,
     ).prefetch(1)
 
 
+def _compile_model(model, learning_rate):
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
+        metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
+    )
+
+
+def _build_augmentation(seed=SEED):
+    """Crea generadores una vez; cada llamada de entrenamiento avanza su estado.
+
+    Las capas conservan RGB float32 en [0, 255] y son identidad en inferencia.
+    Las semillas distintas evitan acoplar los sorteos de cada transformación.
+    """
+    return tf.keras.Sequential([
+        tf.keras.layers.RandomFlip("horizontal", seed=seed),
+        tf.keras.layers.RandomRotation(
+            MAX_ROTATION_DEGREES / 360.0, fill_mode="constant",
+            fill_value=0.0, interpolation="bilinear", seed=seed + 1,
+        ),
+        tf.keras.layers.RandomTranslation(
+            MAX_SHIFT_FRACTION, MAX_SHIFT_FRACTION, fill_mode="constant",
+            fill_value=0.0, interpolation="bilinear", seed=seed + 2,
+        ),
+        tf.keras.layers.RandomContrast(
+            CONTRAST_FACTOR, value_range=(0, 255), seed=seed + 3,
+        ),
+    ], name="train_augmentation")
+
+
 def build_model(num_classes, learning_rate=LEARNING_RATE,
-                dropout_rate=DROPOUT_RATE, image_size=IMAGE_SIZE):
-    """Compila ImageNet congelada con GAP, dropout y softmax para num_classes.
+                dropout_rate=DROPOUT_RATE, image_size=IMAGE_SIZE, *,
+                augmentation=True, seed=SEED):
+    """Compila ImageNet congelada con augmentación opcional solo al entrenar.
 
     La primera ejecución descarga los pesos oficiales si no están en caché.
     El modelo guardado espera lotes RGB de image_size cuadrados, en [0, 255].
@@ -154,6 +191,8 @@ def build_model(num_classes, learning_rate=LEARNING_RATE,
         learning_rate (float): Tasa de aprendizaje de Adam.
         dropout_rate (float): Fracción de unidades descartadas en la cabeza.
         image_size (int): Alto y ancho de entrada en píxeles, al menos 32.
+        augmentation (bool): Activar transformaciones aleatorias durante fit.
+        seed (int): Semilla de los generadores de augmentación.
 
     Returns:
         tf.keras.Model: Modelo compilado con base congelada, clasificador
@@ -165,20 +204,28 @@ def build_model(num_classes, learning_rate=LEARNING_RATE,
     )
     backbone.trainable = False
     inputs = tf.keras.Input(shape=(image_size, image_size, 3), name="rgb_pixels")
+    # Keras propaga training: activo en fit, inactivo en evaluate/predict.
+    pixels = _build_augmentation(seed)(inputs) if augmentation else inputs
     # Modo inferencia también para BatchNormalization y stochastic depth.
-    features = backbone(inputs, training=False)
+    features = backbone(pixels, training=False)
     features = tf.keras.layers.GlobalAveragePooling2D(name="global_pool")(features)
     features = tf.keras.layers.Dropout(dropout_rate, name="head_dropout")(features)
     outputs = tf.keras.layers.Dense(
         num_classes, activation="softmax", name="car_probabilities",
     )(features)
     model = tf.keras.Model(inputs, outputs, name="efficientnet")
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
-        metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
-    )
+    _compile_model(model, learning_rate)
     return model
+
+
+def _configure_fine_tuning(model, learning_rate):
+    backbone = model.get_layer("efficientnetb0")
+    backbone.trainable = True
+    for layer in backbone.layers:
+        layer.trainable = (
+            layer.name.startswith("block7a_") or layer.name == "top_conv"
+        ) and not isinstance(layer, tf.keras.layers.BatchNormalization)
+    _compile_model(model, learning_rate)
 
 
 def calculate_metrics(expected, predicted, num_classes):
@@ -203,7 +250,8 @@ def calculate_metrics(expected, predicted, num_classes):
     }
 
 
-def save_reports(model, datasets, splits, class_names, history, output_dir):
+def save_reports(model, datasets, splits, class_names, history, output_dir, *,
+                 fine_tune_start_epoch=None):
     """Exporta seis PNG y devuelve métricas y matrices con los mejores pesos.
 
     Las curvas muestran train/val/test por época. Los reportes finales usan
@@ -231,6 +279,9 @@ def save_reports(model, datasets, splits, class_names, history, output_dir):
         for name, prefix in (("train", ""), ("val", "val_"), ("test", "test_")):
             ax.plot(epochs, history[f"{prefix}{metric}"], label=name,
                     color=COLORS[name], marker="o", markersize=3)
+        if fine_tune_start_epoch is not None:
+            ax.axvline(fine_tune_start_epoch - 0.5, color="gray", linestyle="--",
+                       label="Inicio de fine tuning")
         ax.set(xlabel="Época", ylabel=title, title=f"{title} por conjunto")
         ax.set_xticks(epochs[::max(1, len(epochs) // 10)])
         if metric == "accuracy":
@@ -282,11 +333,15 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
                          output_dir=OUTPUT_DIR, artifacts_dir=ARTIFACTS_DIR,
                          epochs=EPOCHS, batch_size=BATCH_SIZE, seed=SEED, *,
                          learning_rate=LEARNING_RATE, dropout_rate=DROPOUT_RATE,
-                         patience=PATIENCE, image_size=IMAGE_SIZE):
-    """Entrena solo el clasificador y guarda el mejor modelo por F1 macro val.
+                         patience=PATIENCE, image_size=IMAGE_SIZE,
+                         fine_tune_epochs=FINE_TUNE_EPOCHS,
+                         fine_tune_learning_rate=FINE_TUNE_LEARNING_RATE,
+                         augmentation=True):
+    """Entrena la cabeza y hace fine tuning; selecciona por F1 macro val.
 
-    No genera splits, augmentación ni busca hiperparámetros. Guarda PNG en
-    output_dir y efficientnet.keras directamente en artifacts_dir, sin JSON
+    Usa los originales procesados y augmentación dinámica solo durante fit,
+    sin guardar variantes en disco. No genera splits ni busca hiperparámetros.
+    Guarda PNG en output_dir y efficientnet.keras en artifacts_dir, sin JSON
     ni subcarpeta adicional; otra ejecución sustituye estos resultados.
 
     Args:
@@ -298,11 +353,14 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
             por defecto public/models.
         epochs (int): Máximo de épocas de entrenamiento.
         batch_size (int): Máximo de imágenes por lote.
-        seed (int): Semilla para inicialización y mezcla de train.
+        seed (int): Semilla para inicialización, mezcla de train y augmentación.
         learning_rate (float): Tasa de aprendizaje de Adam.
         dropout_rate (float): Fracción de dropout del clasificador.
         patience (int): Épocas sin mejora de F1 macro val antes de detenerse.
         image_size (int): Alto y ancho de entrada en píxeles, al menos 32.
+        fine_tune_epochs (int): Máximo de épocas de ajuste parcial; 0 lo omite.
+        fine_tune_learning_rate (float): Tasa de aprendizaje del ajuste parcial.
+        augmentation (bool): Activar transformaciones aleatorias solo en train.
 
     Returns:
         dict: model con los mejores pesos, history con métricas de train,
@@ -313,7 +371,10 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
     """
     tf.keras.utils.set_random_seed(seed)
     splits, class_names = load_splits(input_dir, sets_dir)
-    model = build_model(len(class_names), learning_rate, dropout_rate, image_size)
+    model = build_model(
+        len(class_names), learning_rate, dropout_rate, image_size,
+        augmentation=augmentation, seed=seed,
+    )
     datasets = {
         name: make_dataset(data["paths"], data["labels"], batch_size,
                            image_size=image_size)
@@ -328,7 +389,17 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
         "image_size": image_size, "input_range": [0, 255],
         "resize": "bilinear_with_pad_antialias", "optimizer": "Adam",
         "learning_rate": learning_rate, "dropout_rate": dropout_rate,
+        "fine_tune_epochs": fine_tune_epochs,
+        "fine_tune_learning_rate": fine_tune_learning_rate,
         "epochs": epochs, "batch_size": batch_size, "seed": seed,
+        "augmentation": {
+            "enabled": augmentation, "horizontal_flip": True,
+            "max_rotation_degrees": MAX_ROTATION_DEGREES,
+            "max_shift_fraction": MAX_SHIFT_FRACTION,
+            "contrast_factor": CONTRAST_FACTOR, "value_range": [0, 255],
+            "fill_mode": "constant", "fill_value": 0.0,
+            "interpolation": "bilinear", "seed": seed,
+        },
         "patience": patience, "monitor": "val_f1_macro",
         "input_dir": str(Path(input_dir).resolve()),
         "sets_dir": str(Path(sets_dir).resolve()),
@@ -336,6 +407,7 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
         "artifacts_dir": str(Path(artifacts_dir).resolve()),
         "num_parameters": model.count_params(),
         "trainable_parameters": int(sum(np.prod(w.shape) for w in model.trainable_weights)),
+        "stages": [],
     }
     device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
     print(
@@ -371,29 +443,74 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
         test_scores = model.evaluate(datasets["test"], verbose=0, return_dict=True)
         logs["test_loss"] = float(test_scores["loss"])
         logs["test_accuracy"] = float(test_scores["accuracy"])
+        logs["learning_rate"] = float(
+            tf.keras.backend.get_value(model.optimizer.learning_rate)
+        )
         print(
             f" — val_f1_macro: {logs['val_f1_macro']:.4f} | "
             f"test_loss: {logs['test_loss']:.4f} | "
             f"test_accuracy: {logs['test_accuracy']:.4f}", flush=True,
         )
 
-    history = model.fit(
-        train_dataset, validation_data=datasets["val"], epochs=epochs,
-        callbacks=[
-            tf.keras.callbacks.TerminateOnNaN(),
-            tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_epoch_metrics),
-            tf.keras.callbacks.EarlyStopping(
-                monitor="val_f1_macro", mode="max", patience=patience,
-                min_delta=0, restore_best_weights=True, verbose=1,
+    def fit_stage(name, stage_epochs, stage_learning_rate, initial_epoch=0):
+        stage = {
+            "name": name, "learning_rate": stage_learning_rate,
+            "epochs": stage_epochs, "start_epoch": initial_epoch + 1,
+            "backbone_trainable": model.get_layer("efficientnetb0").trainable,
+            "trainable_parameters": int(
+                sum(np.prod(w.shape) for w in model.trainable_weights)
             ),
-        ],
-        shuffle=False, verbose=1,
-    ).history
+        }
+        config["stages"].append(stage)
+        print(
+            f"\nEtapa: {name} | lr: {stage_learning_rate:g} | "
+            f"épocas máximas: {stage_epochs} | "
+            f"parámetros entrenables: {stage['trainable_parameters']:,}",
+            flush=True,
+        )
+        stage_history = model.fit(
+            train_dataset, validation_data=datasets["val"],
+            initial_epoch=initial_epoch, epochs=initial_epoch + stage_epochs,
+            callbacks=[
+                tf.keras.callbacks.TerminateOnNaN(),
+                tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_epoch_metrics),
+                tf.keras.callbacks.EarlyStopping(
+                    monitor="val_f1_macro", mode="max", patience=patience,
+                    min_delta=0, restore_best_weights=True, verbose=1,
+                ),
+            ],
+            shuffle=False, verbose=1,
+        ).history
+        stage["epochs_trained"] = len(stage_history["loss"])
+        return stage_history
+
+    history = fit_stage("head", epochs, learning_rate)
+    fine_tune_start_epoch = None
+    if fine_tune_epochs:
+        head_best_score = max(history["val_f1_macro"])
+        head_best_weights = model.get_weights()
+        head_epochs = len(history["loss"])
+        fine_tune_start_epoch = head_epochs + 1
+        _configure_fine_tuning(model, fine_tune_learning_rate)
+        fine_tune_history = fit_stage(
+            "fine_tuning", fine_tune_epochs, fine_tune_learning_rate,
+            initial_epoch=head_epochs,
+        )
+        if max(fine_tune_history["val_f1_macro"]) <= head_best_score:
+            model.set_weights(head_best_weights)
+            print("Se conservan los mejores pesos de la primera etapa.", flush=True)
+        del head_best_weights
+        for name, values in fine_tune_history.items():
+            history[name].extend(values)
+
+    config["backbone_trainable"] = model.get_layer("efficientnetb0").trainable
+    config["trainable_parameters"] = config["stages"][-1]["trainable_parameters"]
     history = {name: [float(value) for value in values]
                for name, values in history.items()}
     best_epoch = int(np.argmax(history["val_f1_macro"])) + 1
     metrics, matrices = save_reports(
         model, datasets, splits, class_names, history, output_dir,
+        fine_tune_start_epoch=fine_tune_start_epoch,
     )
     artifacts_dir = Path(artifacts_dir)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
