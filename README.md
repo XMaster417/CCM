@@ -148,17 +148,54 @@ En VS Code abre el proyecto conectado a WSL y selecciona
 
 ### Repetibilidad del entrenamiento
 
-Ambas CNN activan `tf.config.experimental.enable_op_determinism()` y fijan
-la semilla con `tf.keras.utils.set_random_seed(seed)` (42 por defecto).
-La CNN v2 reinicia la semilla antes de entrenar cada candidato. Esto permite
-repetir los resultados con los mismos datos, hiperparámetros, dispositivo y
-entorno de software. No garantiza resultados idénticos entre CPU y GPU ni
-entre versiones distintas de las dependencias.
+Ambas CNN fijan la semilla con `tf.keras.utils.set_random_seed(seed)`
+(42 por defecto). La CNN v2 reinicia la semilla antes de entrenar cada
+candidato para controlar la inicialización y la mezcla de datos.
 
-El determinismo puede reducir la velocidad de entrenamiento. Si una operación
-no dispone de implementación determinista, TensorFlow puede lanzar
-`UnimplementedError`. La configuración se aplica tanto desde `main.py` como
-al ejecutar cada CNN directamente.
+### Regularización L2 en CNN v2
+
+La CNN v2 compara `L2_RATES = (0.0, 1e-5, 1e-4, 1e-3)` y elige la
+combinación con mayor F1 macro de validación. `0` es la referencia sin L2 y
+puede ganar; ante un empate se conserva el primer candidato evaluado. Test
+se evalúa después de seleccionar al ganador y no participa en la selección.
+Con learning rate `0.001`, dropout `0.5` y pooling `3×3`, la configuración
+actual ejecuta cuatro entrenamientos en lugar de uno; el tiempo depende
+de las épocas que alcance cada candidato antes de la detención temprana.
+
+El artículo disponible en `docs/Data Augmentation-Driven Improvements in
+Malignant Lymphoma Image Classification.pdf`, sección 2.2 (página 6), usa L2
+de `0.01` con VGG16 preentrenada y learning rate de `1e-6`
+([publicación](https://www.mdpi.com/2073-431X/14/7/252)). Ese valor no demuestra
+ser óptimo para automóviles. El rango inicial de `1e-5` a `1e-3` es una
+adaptación conservadora para esta CNN entrenada desde cero, con aproximadamente
+6.65 millones de parámetros, unas 1,446 imágenes originales de entrenamiento,
+augmentación y dropout de `0.5`. Su beneficio debe verificarse en validación.
+
+L2 se aplica a los kernels de las cuatro convoluciones y ambas capas densas,
+sin penalizar sesgos ni cambiar el número de parámetros. Según
+[Keras](https://keras.io/api/layers/regularizers/), añade
+`l2_rate * sum(square(kernel))` por cada kernel regularizado a la entropía
+cruzada. Por tanto, `loss`, `val_loss` y `test_loss` incluyen esa penalización;
+la selección entre coeficientes sigue usando F1 macro. CNN v1 mantiene L2
+desactivada por defecto.
+
+Para ajustar la búsqueda, cambia `L2_RATES` en `src/models/cnn_v2.py` o pasa
+los valores explícitamente:
+
+```python
+from models.cnn_v2 import train_model_v2
+
+result = train_model_v2(l2_rates=(0.0, 1e-5, 1e-4, 1e-3))
+print(result["best_l2_rate"])
+# Para evaluar un único valor: train_model_v2(l2_rates=(1e-4,))
+```
+
+La colección no puede estar vacía y los coeficientes deben ser finitos y no
+negativos. `search_results` incluye `l2_rate` para cada candidato y el modelo
+devuelto conserva el coeficiente ganador. Cuando se comparan varios valores,
+se genera `public/images/cnn_v2/cnn_v2_l2_comparison.png`; todas las etiquetas
+de comparación incluyen L2. Las comparaciones de parámetros fijos conservan
+sus imágenes existentes.
 
 ### Diagnóstico
 
@@ -198,6 +235,41 @@ pares, por lo que esa etapa tiene costo cuadrático. Los indicadores de calidad
 se calculan en gris sobre miniaturas de hasta 256 píxeles por lado; dependen
 también del fondo y las texturas y no justifican descartar imágenes automáticamente.
 
+## Preprocesamiento a 320×320 y augmentación
+
+El tamaño se define en `src/scripts/transform_data.py` con `IMAGE_SIZE = 320`.
+Cada imagen se lee desde `data/raw/` y se ajusta directamente a 320×320 sin
+desenfoque gaussiano, conservando corrección EXIF, RGB, proporciones,
+interpolación LANCZOS y relleno negro centrado. Se mantiene JPEG con calidad 95
+y sin submuestreo de color en `data/processed/`.
+
+La augmentación conserva las dimensiones recibidas y añade variantes solo a
+train. Las imágenes y los metadatos necesarios para entrenar se guardan en
+`data/augmented/images/` y `data/augmented/sets/`. Los conteos se muestran
+únicamente en consola; la augmentación no genera reportes en `public/`.
+
+```text
+data/raw/ → ajuste directo a 320×320, sin desenfoque → data/processed/
+         → augmentación a 320×320 → data/augmented/ → CNN v2
+```
+
+Ambas CNN toman su entrada del tamaño del preprocesamiento: `(320, 320, 3)`.
+La normalización sigue siendo `float32` entre 0 y 1. Con la arquitectura actual,
+`Flatten` tiene 51,200 valores y el modelo completo tiene 6,652,458 parámetros.
+
+Para regenerar desde los originales, conservando los splits existentes y sin
+entrenar ni generar nuevos reportes en `public/`:
+
+```powershell
+.\env\Scripts\python.exe -c "import sys; sys.path.insert(0, 'src'); from scripts.transform_data import transform_dataset; from scripts.data_augmentation import augment_dataset; transform_dataset(); augment_dataset()"
+```
+
+Ajusta el intérprete a tu entorno (`env`, `.venv` o `python` dentro de WSL).
+La regeneración sustituye las imágenes procesadas anteriores a partir de los
+originales de `data/raw/`; no amplía las versiones ya reducidas a 224×224.
+En una primera ejecución, `main.py` prepara los splits antes de la augmentación
+y después inicia el entrenamiento con las rutas del dataset aumentado.
+
 ## División del dataset
 
 Después de la transformación, `src/main.py` divide `data/processed` en train
@@ -221,10 +293,10 @@ Una nueva ejecución actualiza los CSV y PNG generados.
 
 La entrada debe contener `metadata.csv` con el mismo esquema que el procesado
 y las imágenes referenciadas. Configura las rutas y la semilla en las constantes
-al inicio de `src/scripts/split_data.py`. Por ejemplo, para usar `data/augmented`:
+al inicio de `src/scripts/split_data.py`:
 
 ```python
-INPUT_DIR = ROOT / "data" / "augmented"
+INPUT_DIR = ROOT / "data" / "processed"
 SETS_DIR = ROOT / "data" / "sets"
 SEED = 42
 ```
