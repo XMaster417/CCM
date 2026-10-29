@@ -1,7 +1,7 @@
 """EfficientNet-B0 sobre augmentación fija en disco y fine tuning parcial.
 
 Primero aprende la cabeza GAP -> Dropout -> Dense y opcionalmente ajusta la base.
-Las imágenes procesadas se cargan en RGB, a 224x224 y en [0, 255]: EfficientNet
+Las imágenes procesadas se cargan en RGB, a 320x320 y en [0, 255]: EfficientNet
 incorpora su propia normalización. La evaluación no aplica augmentación.
 """
 
@@ -31,7 +31,7 @@ INPUT_DIR = ROOT / "data" / "augmented" / "images"
 SETS_DIR = ROOT / "data" / "augmented" / "sets"
 OUTPUT_DIR = ROOT / "public" / "images" / "efficientnet_b0"
 ARTIFACTS_DIR = ROOT / "public" / "models"
-IMAGE_SIZE = 224
+IMAGE_SIZE = 320
 EPOCHS = 30
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
