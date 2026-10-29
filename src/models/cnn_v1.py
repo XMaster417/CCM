@@ -21,7 +21,7 @@ from sklearn.metrics import (
 # Añadir src a las rutas de importación para reutilizar las funciones de scripts.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.data_analysis import save_figure
-from scripts.transform_data import load_normalized_image
+from scripts.transform_data import IMAGE_SIZE, load_normalized_image
 
 # Definir dónde leer las imágenes y los conjuntos, y dónde guardar los PNG.
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +30,7 @@ SETS_DIR = ROOT / "data" / "sets"
 OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v1"
 
 # Configurar la entrada (alto, ancho, canales), las clases y el entrenamiento.
-IMAGE_SHAPE = (224, 224, 3)
+IMAGE_SHAPE = (IMAGE_SIZE, IMAGE_SIZE, 3)
 NUM_CLASSES = 10
 EPOCHS = 30
 PATIENCE = 5  # Épocas consecutivas sin aumentar val_f1_macro antes de detenerse.
@@ -101,7 +101,7 @@ def _load_image(path):
             tf.numpy_function.
 
     Returns:
-        np.ndarray: Imagen float32 de forma (224, 224, 3), con píxeles
+        np.ndarray: Imagen float32 de forma IMAGE_SHAPE (320, 320, 3), con píxeles
             normalizados entre 0 y 1.
     """
     # Extraer el valor si TensorFlow lo entrega dentro de un array de NumPy.
@@ -126,7 +126,7 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED)
 
     Returns:
         tf.data.Dataset: Lotes (imágenes, etiquetas), con formas 
-            (N, 224, 224, 3) y (N,).
+            (N, IMAGE_SIZE, IMAGE_SIZE, 3) y (N,).
     """
     # Emparejar cada ruta con su etiqueta, aún no se leen los píxeles.
     dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
@@ -144,7 +144,7 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED)
             label (tf.Tensor): Etiqueta escalar de tipo int32.
 
         Returns:
-            tuple[tf.Tensor, tf.Tensor]: Imagen float32 (224, 224, 3) y su
+            tuple[tf.Tensor, tf.Tensor]: Imagen float32 de forma IMAGE_SHAPE y su
                 etiqueta original.
         """
         # Ejecutar la función de NumPy/Pillow dentro del flujo de TensorFlow.
@@ -158,16 +158,16 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED)
     ).prefetch(1)
 
 def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
-                pool_size=(4, 4)):
+                pool_size=(4, 4), l2_rate=0.0):
     """
     Construye y compila la CNN que recibe una imagen y clasifica su automóvil.
     Recorrido por imagen con stride 2 y padding same:
-        Entrada:     224 x 224 x 3
-        Conv + pool: 112 x 112 x 16
-        Conv + pool:  56 x  56 x 32
-        Conv + pool:  28 x  28 x 64
-        Conv + pool:  14 x  14 x 128
-        Flatten:     25,088 valores
+        Entrada:     320 x 320 x 3
+        Conv + pool: 160 x 160 x 16
+        Conv + pool:  80 x  80 x 32
+        Conv + pool:  40 x  40 x 64
+        Conv + pool:  20 x  20 x 128
+        Flatten:     51,200 valores
         Dense ReLU:  128 valores
         Softmax:      10 probabilidades que suman aproximadamente 1
 
@@ -179,18 +179,27 @@ def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
         pool_size (tuple[int, int]): Ventana de max pooling en los cuatro
             bloques, con stride 2 y padding same. Cambiarla conserva
             el tamaño de Flatten y los parámetros de la capa Dense.
+        l2_rate (float): Coeficiente finito y no negativo de L2 sobre los
+            kernels de Conv2D y Dense, sin penalizar sesgos. Cero desactiva L2.
 
     Returns:
         tf.keras.Sequential: Modelo compilado con Adam, pérdida
-            SparseCategoricalCrossentropy y métrica de accuracy multiclase.
+            SparseCategoricalCrossentropy más L2 cuando está activa, y métrica 
+            de accuracy multiclase.
     """
+    l2_rate = float(l2_rate)
+    regularizer = tf.keras.regularizers.L2(l2_rate) if l2_rate else None
+
     # Declarar la forma de cada imagen.
     layers = [tf.keras.layers.Input(shape=IMAGE_SHAPE)]
     
     # Añadir cuatro bloques convolución 3x3 con ReLU y pooling configurable.
     for filters in (16, 32, 64, 128):
         layers.extend([
-            tf.keras.layers.Conv2D(filters, 3, padding="same", activation="relu"),
+            tf.keras.layers.Conv2D(
+                filters, 3, padding="same", activation="relu",
+                kernel_regularizer=regularizer,
+            ),
             tf.keras.layers.MaxPooling2D(
                 pool_size=pool_size, strides=2, padding="same",
             ),
@@ -199,12 +208,16 @@ def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
     # Aplanar, combinar características y producir probabilidades.
     layers.extend([
         tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(128, activation="relu"),
+        tf.keras.layers.Dense(
+            128, activation="relu", kernel_regularizer=regularizer,
+        ),
     ])
     if dropout_rate:
         layers.append(tf.keras.layers.Dropout(dropout_rate))
 
-    layers.append(tf.keras.layers.Dense(NUM_CLASSES, activation="softmax"))
+    layers.append(tf.keras.layers.Dense(
+        NUM_CLASSES, activation="softmax", kernel_regularizer=regularizer,
+    ))
     
     # Encadenar las capas y definir cómo aprenderá el modelo.
     model = tf.keras.Sequential(layers, name=model_name)
@@ -392,8 +405,6 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
     # TensorFlow asigna automáticamente las operaciones compatibles a la GPU.
     device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
     tf.keras.utils.set_random_seed(seed)
-    # La semilla fija la aleatoriedad; el determinismo fija los cálculos.
-    tf.config.experimental.enable_op_determinism()
     splits, class_names = load_splits(input_dir, sets_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

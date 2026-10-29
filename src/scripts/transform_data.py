@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageOps
 
 
 # Preparar las carpetas del proyecto y el tamaño de las imagenes.
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "raw"
 ANALYSIS_DIR = ROOT / "public" / "documents"
 PROCESSED_DIR = ROOT / "data" / "processed"
-IMAGE_SIZE = 224
+IMAGE_SIZE = 320
 
 
 def select_images(metadata, exact, candidates):
@@ -116,11 +116,12 @@ def select_images(metadata, exact, candidates):
 def preprocess_image(path, image_size=IMAGE_SIZE):
     """
     Corrige la orientación, convierte a RGB y ajusta el tamaño sin deformar.
-    Conserva toda la imagen y completa el espacio restante con relleno negro.
+    Reescala directamente desde el original, sin desenfoque. Conserva toda la
+    imagen y completa el espacio restante con relleno negro.
 
     Args:
         path (str | Path): Ruta de la imagen original.
-        image_size (int): Ancho y alto de la imagen de salida, en pixeles.
+        image_size (int): Ancho y alto de salida, por defecto 320 píxeles.
 
     Returns:
         Image.Image: Imagen RGB reescalada con relleno negro.
@@ -129,10 +130,6 @@ def preprocess_image(path, image_size=IMAGE_SIZE):
     with Image.open(path) as source:
         rgb = ImageOps.exif_transpose(source).convert("RGB")
         # Ajustar la imagen dentro de un cuadrado, centrada y sin recortar.
-        rgb = ImageOps.contain(
-            rgb, (image_size, image_size), method=Image.Resampling.LANCZOS,
-        )
-        rgb = rgb.filter(ImageFilter.GaussianBlur(radius=1))
         resized = ImageOps.pad(
             rgb, (image_size, image_size), method=Image.Resampling.LANCZOS,
             color=(0, 0, 0), centering=(0.5, 0.5),

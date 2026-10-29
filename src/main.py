@@ -1,7 +1,8 @@
-"""Descarga, analiza, transforma, divide y entrena la CNN de automóviles."""
+"""Descarga, analiza, transforma, divide, aumenta y entrena la CNN de automóviles."""
 
 from models.cnn_v1 import train_model_v1
 from models.cnn_v2 import train_model_v2
+from scripts.data_augmentation import augment_dataset
 from scripts.data_analysis import analyze_dataset
 from scripts.load_data import download_data, preview_images
 from scripts.split_data import split_dataset
@@ -34,9 +35,16 @@ def main():
 # ------------------------------------------------------------------------------
     split_dataset()
 # ------------------------------------------------------------------------------
+# Aumentar solo train y conservar los conjuntos de validación y test
+# ------------------------------------------------------------------------------
+    augmented = augment_dataset()
+# ------------------------------------------------------------------------------
 # Entrenamiento y evaluación de la CNN
 # ------------------------------------------------------------------------------
-    train_model_v2()
+    train_model_v2(
+        input_dir=augmented["input_dir"],
+        sets_dir=augmented["sets_dir"],
+    )
 
 if __name__ == "__main__":
     main()
