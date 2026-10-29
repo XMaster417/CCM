@@ -1,4 +1,4 @@
-"""EfficientNet-B0 con augmentación dinámica de train y fine tuning parcial.
+"""EfficientNet-B0 sobre augmentación fija en disco y fine tuning parcial.
 
 Primero aprende la cabeza GAP -> Dropout -> Dense y opcionalmente ajusta la base.
 Las imágenes procesadas se cargan en RGB, a 224x224 y en [0, 255]: EfficientNet
@@ -27,8 +27,8 @@ from scripts.data_analysis import save_figure
 
 
 ROOT = Path(__file__).resolve().parents[2]
-INPUT_DIR = ROOT / "data" / "processed"
-SETS_DIR = ROOT / "data" / "sets"
+INPUT_DIR = ROOT / "data" / "augmented" / "images"
+SETS_DIR = ROOT / "data" / "augmented" / "sets"
 OUTPUT_DIR = ROOT / "public" / "images" / "efficientnet_b0"
 ARTIFACTS_DIR = ROOT / "public" / "models"
 IMAGE_SIZE = 224
@@ -40,9 +40,6 @@ FINE_TUNE_LEARNING_RATE = 0.00001
 DROPOUT_RATE = 0.5
 PATIENCE = 5
 SEED = 42
-MAX_ROTATION_DEGREES = 5.0
-MAX_SHIFT_FRACTION = 0.03
-CONTRAST_FACTOR = 0.1
 SPLITS = ("train", "val", "test")
 COLORS = {"train": "#3679ac", "val": "#d98735", "test": "#47956a"}
 
@@ -97,7 +94,7 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED,
     """Carga RGB float32 en [0, 255], sin dividir por 255 ni augmentar.
 
     Ajusta con padding negro para conservar proporciones; no altera los archivos.
-    La augmentación se aplica dentro del modelo, únicamente al entrenar.
+    Las variantes de train ya están guardadas en data/augmented/images.
     Solo train debe mezclarse para mantener alineadas predicciones y etiquetas
     durante la evaluación de los conjuntos.
 
@@ -156,32 +153,9 @@ def _compile_model(model, learning_rate):
     )
 
 
-def _build_augmentation(seed=SEED):
-    """Crea generadores una vez; cada llamada de entrenamiento avanza su estado.
-
-    Las capas conservan RGB float32 en [0, 255] y son identidad en inferencia.
-    Las semillas distintas evitan acoplar los sorteos de cada transformación.
-    """
-    return tf.keras.Sequential([
-        tf.keras.layers.RandomFlip("horizontal", seed=seed),
-        tf.keras.layers.RandomRotation(
-            MAX_ROTATION_DEGREES / 360.0, fill_mode="constant",
-            fill_value=0.0, interpolation="bilinear", seed=seed + 1,
-        ),
-        tf.keras.layers.RandomTranslation(
-            MAX_SHIFT_FRACTION, MAX_SHIFT_FRACTION, fill_mode="constant",
-            fill_value=0.0, interpolation="bilinear", seed=seed + 2,
-        ),
-        tf.keras.layers.RandomContrast(
-            CONTRAST_FACTOR, value_range=(0, 255), seed=seed + 3,
-        ),
-    ], name="train_augmentation")
-
-
 def build_model(num_classes, learning_rate=LEARNING_RATE,
-                dropout_rate=DROPOUT_RATE, image_size=IMAGE_SIZE, *,
-                augmentation=True, seed=SEED):
-    """Compila ImageNet congelada con augmentación opcional solo al entrenar.
+                dropout_rate=DROPOUT_RATE, image_size=IMAGE_SIZE):
+    """Compila ImageNet congelada sin transformaciones de augmentación.
 
     La primera ejecución descarga los pesos oficiales si no están en caché.
     El modelo guardado espera lotes RGB de image_size cuadrados, en [0, 255].
@@ -191,8 +165,6 @@ def build_model(num_classes, learning_rate=LEARNING_RATE,
         learning_rate (float): Tasa de aprendizaje de Adam.
         dropout_rate (float): Fracción de unidades descartadas en la cabeza.
         image_size (int): Alto y ancho de entrada en píxeles, al menos 32.
-        augmentation (bool): Activar transformaciones aleatorias durante fit.
-        seed (int): Semilla de los generadores de augmentación.
 
     Returns:
         tf.keras.Model: Modelo compilado con base congelada, clasificador
@@ -204,10 +176,8 @@ def build_model(num_classes, learning_rate=LEARNING_RATE,
     )
     backbone.trainable = False
     inputs = tf.keras.Input(shape=(image_size, image_size, 3), name="rgb_pixels")
-    # Keras propaga training: activo en fit, inactivo en evaluate/predict.
-    pixels = _build_augmentation(seed)(inputs) if augmentation else inputs
     # Modo inferencia también para BatchNormalization y stochastic depth.
-    features = backbone(pixels, training=False)
+    features = backbone(inputs, training=False)
     features = tf.keras.layers.GlobalAveragePooling2D(name="global_pool")(features)
     features = tf.keras.layers.Dropout(dropout_rate, name="head_dropout")(features)
     outputs = tf.keras.layers.Dense(
@@ -335,12 +305,11 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
                          learning_rate=LEARNING_RATE, dropout_rate=DROPOUT_RATE,
                          patience=PATIENCE, image_size=IMAGE_SIZE,
                          fine_tune_epochs=FINE_TUNE_EPOCHS,
-                         fine_tune_learning_rate=FINE_TUNE_LEARNING_RATE,
-                         augmentation=True):
+                         fine_tune_learning_rate=FINE_TUNE_LEARNING_RATE):
     """Entrena la cabeza y hace fine tuning; selecciona por F1 macro val.
 
-    Usa los originales procesados y augmentación dinámica solo durante fit,
-    sin guardar variantes en disco. No genera splits ni busca hiperparámetros.
+    Usa los originales y variantes fijas de data/augmented, sin aplicar nuevas
+    transformaciones durante fit. No genera splits ni busca hiperparámetros.
     Guarda PNG en output_dir y efficientnet.keras en artifacts_dir, sin JSON
     ni subcarpeta adicional; otra ejecución sustituye estos resultados.
 
@@ -353,14 +322,13 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
             por defecto public/models.
         epochs (int): Máximo de épocas de entrenamiento.
         batch_size (int): Máximo de imágenes por lote.
-        seed (int): Semilla para inicialización, mezcla de train y augmentación.
+        seed (int): Semilla para inicialización y mezcla de train.
         learning_rate (float): Tasa de aprendizaje de Adam.
         dropout_rate (float): Fracción de dropout del clasificador.
         patience (int): Épocas sin mejora de F1 macro val antes de detenerse.
         image_size (int): Alto y ancho de entrada en píxeles, al menos 32.
         fine_tune_epochs (int): Máximo de épocas de ajuste parcial; 0 lo omite.
         fine_tune_learning_rate (float): Tasa de aprendizaje del ajuste parcial.
-        augmentation (bool): Activar transformaciones aleatorias solo en train.
 
     Returns:
         dict: model con los mejores pesos, history con métricas de train,
@@ -373,7 +341,6 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
     splits, class_names = load_splits(input_dir, sets_dir)
     model = build_model(
         len(class_names), learning_rate, dropout_rate, image_size,
-        augmentation=augmentation, seed=seed,
     )
     datasets = {
         name: make_dataset(data["paths"], data["labels"], batch_size,
@@ -393,12 +360,7 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
         "fine_tune_learning_rate": fine_tune_learning_rate,
         "epochs": epochs, "batch_size": batch_size, "seed": seed,
         "augmentation": {
-            "enabled": augmentation, "horizontal_flip": True,
-            "max_rotation_degrees": MAX_ROTATION_DEGREES,
-            "max_shift_fraction": MAX_SHIFT_FRACTION,
-            "contrast_factor": CONTRAST_FACTOR, "value_range": [0, 255],
-            "fill_mode": "constant", "fill_value": 0.0,
-            "interpolation": "bilinear", "seed": seed,
+            "mode": "fixed_on_disk", "dynamic": False,
         },
         "patience": patience, "monitor": "val_f1_macro",
         "input_dir": str(Path(input_dir).resolve()),

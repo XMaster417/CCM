@@ -44,7 +44,7 @@ las 10 clases de automóviles.
 Se conserva el código de TensorFlow/Keras. Los modelos usan automáticamente GPU
 si TensorFlow dispone de ella, o CPU en caso contrario, y muestran el dispositivo
 en consola. `main.py` ejecuta actualmente `train_efficientnet_b0()` sobre
-`data/processed`, sin augmentación.
+`data/augmented/images`, con augmentación fija generada antes de entrenar.
 
 ### Preparación (una sola vez)
 
@@ -254,7 +254,7 @@ train. Las imágenes y los metadatos necesarios para entrenar se guardan en
 
 ```text
 data/raw/ → ajuste directo a 320×320, sin desenfoque → data/processed/
-         → augmentación a 320×320 → data/augmented/ → CNN v2
+         → augmentación fija a 320×320 → data/augmented/ → EfficientNet-B0
 ```
 
 Ambas CNN toman su entrada del tamaño del preprocesamiento: `(320, 320, 3)`.
@@ -271,22 +271,25 @@ entrenar ni generar nuevos reportes en `public/`:
 Ajusta el intérprete a tu entorno (`env`, `.venv` o `python` dentro de WSL).
 La regeneración sustituye las imágenes procesadas anteriores a partir de los
 originales de `data/raw/`; no amplía las versiones ya reducidas a 224×224.
-En una primera ejecución, `main.py` prepara los splits y entrena EfficientNet-B0
-con `data/processed`. La augmentación y las CNN anteriores pueden ejecutarse
-por separado; no forman parte del flujo actual de `main.py`.
+`main.py` prepara los splits, genera la augmentación fija y entrena EfficientNet-B0
+con `data/augmented`. Las CNN anteriores pueden ejecutarse por separado.
 
 ## Línea base de EfficientNet-B0
 
 `src/models/efficientnet_b0.py` utiliza `tf.keras.applications.EfficientNetB0`
-con pesos de ImageNet, `include_top=False` y toda la base congelada.
+con pesos de ImageNet, `include_top=False` y la base congelada en la primera etapa.
 También llama la base con `training=False` para conservar las estadísticas de
-BatchNormalization y desactivar la aleatoriedad interna de la base. Solo aprende
-el clasificador: `GlobalAveragePooling2D → Dropout(0.2) → Dense(n_clases, softmax)`.
+BatchNormalization y desactivar la aleatoriedad interna de la base. Primero aprende
+el clasificador: `GlobalAveragePooling2D → Dropout(0.5) → Dense(n_clases, softmax)`.
 Las clases se infieren de train en orden alfabético; actualmente son diez y el
-clasificador tiene 12,810 parámetros entrenables.
+clasificador tiene 12,810 parámetros entrenables. Después ajusta `block7a_*` y
+`top_conv` durante un máximo de 10 épocas con learning rate `1e-5`, manteniendo
+BatchNormalization congelada. Conserva los mejores pesos entre ambas etapas
+según F1 macro de validación; `fine_tune_epochs=0` omite el ajuste parcial.
 
-La entrada por defecto es `data/processed`, con los CSV existentes en
-`data/sets/{train,val,test}/metadata.csv`. No se vuelven a dividir los datos al
+La entrada por defecto es `data/augmented/images`, con los CSV existentes en
+`data/augmented/sets/{train,val,test}/metadata.csv`. Train contiene originales
+y variantes fijas; val y test conservan solo originales. No se vuelven a dividir los datos al
 ejecutar únicamente este modelo. Los CSV deben contener `class` y `path`, con
 rutas relativas a la carpeta de imágenes, las mismas clases en los tres
 conjuntos y ninguna ruta repetida dentro de un conjunto o entre conjuntos.
@@ -313,7 +316,7 @@ interrumpe la ejecución sin exportar un modelo de esa ejecución.
 
 ### Ejecutar y cambiar el conjunto
 
-Para entrenar solo EfficientNet sobre los datos ya preparados:
+Para entrenar solo EfficientNet sobre los datos aumentados ya preparados:
 
 ```powershell
 .\env\Scripts\python.exe src/models/efficientnet_b0.py
@@ -338,7 +341,7 @@ result = train_efficientnet_b0(
     epochs=30,
     batch_size=32,
     learning_rate=0.001,
-    dropout_rate=0.2,
+    dropout_rate=0.5,
     patience=5,
     seed=42,
     image_size=224,
@@ -350,9 +353,10 @@ crear una subcarpeta del modelo ni generar un archivo JSON. Una nueva ejecución
 en la misma carpeta sustituye ese archivo. El historial, las clases, la
 configuración y las métricas siguen disponibles en el diccionario `result`.
 
-Para el conjunto aumentado existente, usa `input_dir="data/augmented/images"`
-y `sets_dir="data/augmented/sets"`. Prepara antes sus imágenes y CSV con los
-scripts correspondientes. Cambiar el dataset o sus splits no ejecuta ninguna
+El conjunto aumentado existente se usa por defecto. Para generarlo a partir de
+los datos procesados y splits existentes, ejecuta `python src/scripts/data_augmentation.py`.
+EfficientNet reutiliza esas imágenes sin aplicar augmentación dinámica.
+Cambiar el dataset o sus splits no ejecuta ninguna
 búsqueda automática de hiperparámetros.
 
 ## División del dataset
