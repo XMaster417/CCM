@@ -158,7 +158,7 @@ def make_dataset(paths, labels, batch_size=BATCH_SIZE, shuffle=False, seed=SEED)
     ).prefetch(1)
 
 def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
-                pool_size=(4, 4)):
+                pool_size=(4, 4), l2_rate=0.0):
     """
     Construye y compila la CNN que recibe una imagen y clasifica su automóvil.
     Recorrido por imagen con stride 2 y padding same:
@@ -179,18 +179,27 @@ def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
         pool_size (tuple[int, int]): Ventana de max pooling en los cuatro
             bloques, con stride 2 y padding same. Cambiarla conserva
             el tamaño de Flatten y los parámetros de la capa Dense.
+        l2_rate (float): Coeficiente finito y no negativo de L2 sobre los
+            kernels de Conv2D y Dense, sin penalizar sesgos. Cero desactiva L2.
 
     Returns:
         tf.keras.Sequential: Modelo compilado con Adam, pérdida
-            SparseCategoricalCrossentropy y métrica de accuracy multiclase.
+            SparseCategoricalCrossentropy más L2 cuando está activa, y métrica 
+            de accuracy multiclase.
     """
+    l2_rate = float(l2_rate)
+    regularizer = tf.keras.regularizers.L2(l2_rate) if l2_rate else None
+
     # Declarar la forma de cada imagen.
     layers = [tf.keras.layers.Input(shape=IMAGE_SHAPE)]
     
     # Añadir cuatro bloques convolución 3x3 con ReLU y pooling configurable.
     for filters in (16, 32, 64, 128):
         layers.extend([
-            tf.keras.layers.Conv2D(filters, 3, padding="same", activation="relu"),
+            tf.keras.layers.Conv2D(
+                filters, 3, padding="same", activation="relu",
+                kernel_regularizer=regularizer,
+            ),
             tf.keras.layers.MaxPooling2D(
                 pool_size=pool_size, strides=2, padding="same",
             ),
@@ -199,12 +208,16 @@ def build_model(dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
     # Aplanar, combinar características y producir probabilidades.
     layers.extend([
         tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(128, activation="relu"),
+        tf.keras.layers.Dense(
+            128, activation="relu", kernel_regularizer=regularizer,
+        ),
     ])
     if dropout_rate:
         layers.append(tf.keras.layers.Dropout(dropout_rate))
 
-    layers.append(tf.keras.layers.Dense(NUM_CLASSES, activation="softmax"))
+    layers.append(tf.keras.layers.Dense(
+        NUM_CLASSES, activation="softmax", kernel_regularizer=regularizer,
+    ))
     
     # Encadenar las capas y definir cómo aprenderá el modelo.
     model = tf.keras.Sequential(layers, name=model_name)
@@ -392,8 +405,6 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
     # TensorFlow asigna automáticamente las operaciones compatibles a la GPU.
     device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
     tf.keras.utils.set_random_seed(seed)
-    # La semilla fija la aleatoriedad; el determinismo fija los cálculos.
-    tf.config.experimental.enable_op_determinism()
     splits, class_names = load_splits(input_dir, sets_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

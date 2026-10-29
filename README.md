@@ -148,17 +148,54 @@ En VS Code abre el proyecto conectado a WSL y selecciona
 
 ### Repetibilidad del entrenamiento
 
-Ambas CNN activan `tf.config.experimental.enable_op_determinism()` y fijan
-la semilla con `tf.keras.utils.set_random_seed(seed)` (42 por defecto).
-La CNN v2 reinicia la semilla antes de entrenar cada candidato. Esto permite
-repetir los resultados con los mismos datos, hiperparámetros, dispositivo y
-entorno de software. No garantiza resultados idénticos entre CPU y GPU ni
-entre versiones distintas de las dependencias.
+Ambas CNN fijan la semilla con `tf.keras.utils.set_random_seed(seed)`
+(42 por defecto). La CNN v2 reinicia la semilla antes de entrenar cada
+candidato para controlar la inicialización y la mezcla de datos.
 
-El determinismo puede reducir la velocidad de entrenamiento. Si una operación
-no dispone de implementación determinista, TensorFlow puede lanzar
-`UnimplementedError`. La configuración se aplica tanto desde `main.py` como
-al ejecutar cada CNN directamente.
+### Regularización L2 en CNN v2
+
+La CNN v2 compara `L2_RATES = (0.0, 1e-5, 1e-4, 1e-3)` y elige la
+combinación con mayor F1 macro de validación. `0` es la referencia sin L2 y
+puede ganar; ante un empate se conserva el primer candidato evaluado. Test
+se evalúa después de seleccionar al ganador y no participa en la selección.
+Con learning rate `0.001`, dropout `0.5` y pooling `3×3`, la configuración
+actual ejecuta cuatro entrenamientos en lugar de uno; el tiempo depende
+de las épocas que alcance cada candidato antes de la detención temprana.
+
+El artículo disponible en `docs/Data Augmentation-Driven Improvements in
+Malignant Lymphoma Image Classification.pdf`, sección 2.2 (página 6), usa L2
+de `0.01` con VGG16 preentrenada y learning rate de `1e-6`
+([publicación](https://www.mdpi.com/2073-431X/14/7/252)). Ese valor no demuestra
+ser óptimo para automóviles. El rango inicial de `1e-5` a `1e-3` es una
+adaptación conservadora para esta CNN entrenada desde cero, con aproximadamente
+6.65 millones de parámetros, unas 1,446 imágenes originales de entrenamiento,
+augmentación y dropout de `0.5`. Su beneficio debe verificarse en validación.
+
+L2 se aplica a los kernels de las cuatro convoluciones y ambas capas densas,
+sin penalizar sesgos ni cambiar el número de parámetros. Según
+[Keras](https://keras.io/api/layers/regularizers/), añade
+`l2_rate * sum(square(kernel))` por cada kernel regularizado a la entropía
+cruzada. Por tanto, `loss`, `val_loss` y `test_loss` incluyen esa penalización;
+la selección entre coeficientes sigue usando F1 macro. CNN v1 mantiene L2
+desactivada por defecto.
+
+Para ajustar la búsqueda, cambia `L2_RATES` en `src/models/cnn_v2.py` o pasa
+los valores explícitamente:
+
+```python
+from models.cnn_v2 import train_model_v2
+
+result = train_model_v2(l2_rates=(0.0, 1e-5, 1e-4, 1e-3))
+print(result["best_l2_rate"])
+# Para evaluar un único valor: train_model_v2(l2_rates=(1e-4,))
+```
+
+La colección no puede estar vacía y los coeficientes deben ser finitos y no
+negativos. `search_results` incluye `l2_rate` para cada candidato y el modelo
+devuelto conserva el coeficiente ganador. Cuando se comparan varios valores,
+se genera `public/images/cnn_v2/cnn_v2_l2_comparison.png`; todas las etiquetas
+de comparación incluyen L2. Las comparaciones de parámetros fijos conservan
+sus imágenes existentes.
 
 ### Diagnóstico
 

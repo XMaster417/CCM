@@ -11,11 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from models.cnn_v1 import (
     BATCH_SIZE,
     EPOCHS,
-    INPUT_DIR,
     PATIENCE,
     ROOT,
     SEED,
-    SETS_DIR,
     build_model,
     calculate_metrics,
     load_splits,
@@ -26,10 +24,13 @@ from models.cnn_v1 import (
 )
 from scripts.data_analysis import plt, save_figure
 
+INPUT_DIR = ROOT / "data" / "augmented" / "images"
+SETS_DIR = ROOT / "data" / "augmented" / "sets"
 OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v2"
 LEARNING_RATES = (0.001,)
 DROPOUT_RATES = (0.5,)
 POOL_SIZES = ((3, 3), )
+L2_RATES = (1e-4)
 
 def save_hyperparameter_comparisons(search_results, output_dir):
     """Guarda las cinco mejores combinaciones por valor de cada parámetro variable.
@@ -44,6 +45,7 @@ def save_hyperparameter_comparisons(search_results, output_dir):
         ("pool_size", "pooling", "ventanas de max pooling"),
         ("dropout_rate", "dropout", "tasas de dropout"),
         ("learning_rate", "learning", "tasas de aprendizaje"),
+        ("l2_rate", "l2", "coeficientes de regularización L2"),
     )
     for parameter, filename, title in comparisons:
         values = sorted({result[parameter] for result in search_results})
@@ -63,6 +65,7 @@ def save_hyperparameter_comparisons(search_results, output_dir):
             labels = [
                 f"{r['pool_size'][0]}×{r['pool_size'][1]}\n"
                 f"lr={r['learning_rate']:g}\ndropout={r['dropout_rate']:g}\n"
+                f"l2={r['l2_rate']:g}\n"
                 f"{r['num_parameters']:,} parámetros"
                 for r in candidates
             ]
@@ -84,7 +87,7 @@ def save_hyperparameter_comparisons(search_results, output_dir):
 def fit_candidate(model, train_dataset, validation_dataset, validation_labels,
                   epochs=EPOCHS):
     """
-    Entrena un candidato de pooling y guarda pesos por época.
+    Entrena un candidato de hiperparámetros y guarda pesos por época.
 
     Calcula F1 macro sobre toda la validación y conserva los pesos antes de
     que EarlyStopping restaure la mejor época. No evalúa el conjunto de test.
@@ -144,7 +147,7 @@ def fit_candidate(model, train_dataset, validation_dataset, validation_labels,
 def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
                 epochs=EPOCHS, batch_size=BATCH_SIZE, seed=SEED, *,
                 learning_rates=LEARNING_RATES, dropout_rates=DROPOUT_RATES,
-                pool_sizes=POOL_SIZES):
+                pool_sizes=POOL_SIZES, l2_rates=L2_RATES):
     """
     Compara todas las combinaciones de hiperparametros mediante
     ParameterGrid y selecciona el modelo con mayor F1 macro de validación.
@@ -166,7 +169,8 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             Se evalúan en orden; si hay empate se conserva la primera.
         dropout_rates (iterable[float]): Dropouts a evaluar; por defecto solo 0.5.
         pool_sizes (iterable[tuple[int, int]]): Ventanas, ordenadas de menor
-            a mayor antes de evaluarlas. Por defecto, de 2x2 a 9x9.
+            a mayor antes de evaluarlas.
+        l2_rates (iterable[float]): Coeficientes finitos y no negativos de L2
 
     Returns:
         dict: model (modelo con mayor F1 macro de validación), history
@@ -175,20 +179,22 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             (métricas finales),
             confusion_matrices (matrices 10x10), class_names (orden de clases)
             y output_dir (Path), además de best_learning_rate (float),
-            best_dropout_rate (float), best_pool_size (tuple[int, int]) y
+            best_dropout_rate (float), best_pool_size (tuple[int, int]),
+            best_l2_rate (float)
             search_results (hiperparámetros, F1, épocas y num_parameters
             por combinación). Las épocas se numeran
             desde 1. Solo se exportan los reportes PNG.
     """
-    # Se aplica a toda la búsqueda; cada candidato reinicia su semilla.
-    tf.config.experimental.enable_op_determinism()
     learning_rates = tuple(learning_rates)
     dropout_rates = tuple(dropout_rates)
     pool_sizes = tuple(sorted(tuple(size) for size in pool_sizes))
+    l2_rates = tuple(float(rate) for rate in l2_rates)
+    
     candidates = ParameterGrid({
         "learning_rate": learning_rates,
         "dropout_rate": dropout_rates,
         "pool_size": pool_sizes,
+        "l2_rate": l2_rates,
     })
     device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
     splits, class_names = load_splits(input_dir, sets_dir)
@@ -197,6 +203,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
     print(
         f"Búsqueda en {device} | learning rates: {learning_rates} | "
         f"dropouts: {dropout_rates} | pooling: {pool_sizes} | "
+        f"L2: {l2_rates} | "
         f"combinaciones: {len(candidates)} | "
         f"épocas máximas: {epochs} | "
         f"batch: {batch_size} | semilla: {seed}",
@@ -219,6 +226,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             f"\nCandidato {index}/{len(candidates)} | "
             f"learning_rate={params['learning_rate']:g} | "
             f"dropout_rate={params['dropout_rate']:g} | "
+            f"l2_rate={params['l2_rate']:g} | "
             f"pool_size={params['pool_size']} | parámetros={model.count_params():,}",
             flush=True,
         )
@@ -244,6 +252,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             result["best_epoch"] = best_index + 1
             print(
                 f"Ventana {params['pool_size']} | "
+                f"l2_rate={params['l2_rate']:g} | "
                 f"mejor F1 macro val={result['best_val_f1_macro']:.4f} | "
                 f"mejor época={result['best_epoch']} | "
                 f"épocas ejecutadas={result['epochs_run']} | "
@@ -262,7 +271,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         del model, history, epoch_weights, train_dataset, validation_dataset
     if best_result is None:
         raise RuntimeError(
-            "Ninguna ventana de pooling produjo un entrenamiento con valores finitos."
+            "Ninguna combinación produjo un entrenamiento con valores finitos."
         )
 
     output_dir = Path(output_dir)
@@ -272,6 +281,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         f"\nMejor combinación entre las evaluadas: "
         f"learning_rate={best_result['learning_rate']:g} | "
         f"dropout_rate={best_result['dropout_rate']:g} | "
+        f"l2_rate={best_result['l2_rate']:g} | "
         f"pool_size={best_result['pool_size']} | "
         f"F1 macro de validación: {best_result['best_val_f1_macro']:.4f} | "
         f"mejor época: {best_result['best_epoch']} | "
@@ -283,6 +293,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         dropout_rate=best_result["dropout_rate"], model_name="cnn_v2",
         learning_rate=best_result["learning_rate"],
         pool_size=best_result["pool_size"],
+        l2_rate=best_result["l2_rate"],
     )
     datasets = {
         name: make_dataset(data["paths"], data["labels"], batch_size)
@@ -312,6 +323,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         "best_learning_rate": best_result["learning_rate"],
         "best_dropout_rate": best_result["dropout_rate"],
         "best_pool_size": best_result["pool_size"],
+        "best_l2_rate": best_result["l2_rate"],
         "search_results": search_results,
     }
 
