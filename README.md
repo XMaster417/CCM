@@ -239,6 +239,22 @@ pares, por lo que esa etapa tiene costo cuadrático. Los indicadores de calidad
 se calculan en gris sobre miniaturas de hasta 256 píxeles por lado; dependen
 también del fondo y las texturas y no justifican descartar imágenes automáticamente.
 
+## Limpieza visual del dataset
+
+Se revisaron visualmente algunas imagenes originales de BMW M3, BMW M5, Chevrolet Camaro y
+Ford Mustang, en sus conjuntos de entrenamiento y validación. A partir de esa revisión
+se eliminaron **101 originales**: 20 fotografías de interiores, 25 imágenes de
+LEGO (incluidas piezas) y 56 anuncios. La limpieza se limita a los casos
+identificados en esas cuatro clases, otras miniaturas, renders, detalles y
+etiquetas dudosas siguen pendientes de revisión.
+
+| Conjunto | Originales antes | Originales después | Entradas después en `data/augmented` |
+|---|---:|---:|---:|
+| Train | 1,446 | 1,360 | 2,720 |
+| Validación | 310 | 295 | 295 |
+| Test | 310 | 310 | 310 |
+| Total | 2,066 | 1,965 | 3,325 |
+
 ## Preprocesamiento a 320×320 y augmentación
 
 El tamaño se define en `src/scripts/transform_data.py` con `IMAGE_SIZE = 320`.

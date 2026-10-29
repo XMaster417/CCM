@@ -311,6 +311,8 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
 
     Usa los originales y variantes fijas de data/augmented, sin aplicar nuevas
     transformaciones durante fit. No genera splits ni busca hiperparámetros.
+    Cada etapa reduce el learning rate si val_loss deja de mejorar; la selección
+    de pesos y la detención temprana siguen usando únicamente F1 macro val.
     Guarda PNG en output_dir y efficientnet.keras en artifacts_dir, sin JSON
     ni subcarpeta adicional; otra ejecución sustituye estos resultados.
 
@@ -364,6 +366,10 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
             "mode": "fixed_on_disk", "dynamic": False,
         },
         "patience": patience, "monitor": "val_f1_macro",
+        "reduce_lr_on_plateau": {
+            "monitor": "val_loss", "mode": "min", "factor": 0.5,
+            "patience": 2, "min_lr": 1e-7,
+        },
         "input_dir": str(Path(input_dir).resolve()),
         "sets_dir": str(Path(sets_dir).resolve()),
         "output_dir": str(Path(output_dir).resolve()),
@@ -437,6 +443,9 @@ def train_efficientnet_b0(input_dir=INPUT_DIR, sets_dir=SETS_DIR,
             callbacks=[
                 tf.keras.callbacks.TerminateOnNaN(),
                 tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_epoch_metrics),
+                tf.keras.callbacks.ReduceLROnPlateau(
+                    **config["reduce_lr_on_plateau"], verbose=1,
+                ),
                 tf.keras.callbacks.EarlyStopping(
                     monitor="val_f1_macro", mode="max", patience=patience,
                     min_delta=0, restore_best_weights=True, verbose=1,
