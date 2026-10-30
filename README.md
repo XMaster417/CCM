@@ -150,57 +150,6 @@ actuales y ejecutar el entrenamiento puede sobrescribir los PNG existentes.
 En VS Code abre el proyecto conectado a WSL y selecciona
 `/home/yaelc/.venvs/ccm/bin/python` como intérprete.
 
-### Repetibilidad del entrenamiento
-
-Ambas CNN fijan la semilla con `tf.keras.utils.set_random_seed(seed)`
-(42 por defecto). La CNN v2 reinicia la semilla antes de entrenar cada
-candidato para controlar la inicialización y la mezcla de datos.
-
-### Regularización L2 en CNN v2
-
-La CNN v2 compara `L2_RATES = (0.0, 1e-5, 1e-4, 1e-3)` y elige la
-combinación con mayor F1 macro de validación. `0` es la referencia sin L2 y
-puede ganar; ante un empate se conserva el primer candidato evaluado. Test
-se evalúa después de seleccionar al ganador y no participa en la selección.
-Con learning rate `0.001`, dropout `0.5` y pooling `3×3`, la configuración
-actual ejecuta cuatro entrenamientos en lugar de uno; el tiempo depende
-de las épocas que alcance cada candidato antes de la detención temprana.
-
-El artículo disponible en `docs/Data Augmentation-Driven Improvements in
-Malignant Lymphoma Image Classification.pdf`, sección 2.2 (página 6), usa L2
-de `0.01` con VGG16 preentrenada y learning rate de `1e-6`
-([publicación](https://www.mdpi.com/2073-431X/14/7/252)). Ese valor no demuestra
-ser óptimo para automóviles. El rango inicial de `1e-5` a `1e-3` es una
-adaptación conservadora para esta CNN entrenada desde cero, con aproximadamente
-6.65 millones de parámetros, unas 1,446 imágenes originales de entrenamiento,
-augmentación y dropout de `0.5`. Su beneficio debe verificarse en validación.
-
-L2 se aplica a los kernels de las cuatro convoluciones y ambas capas densas,
-sin penalizar sesgos ni cambiar el número de parámetros. Según
-[Keras](https://keras.io/api/layers/regularizers/), añade
-`l2_rate * sum(square(kernel))` por cada kernel regularizado a la entropía
-cruzada. Por tanto, `loss`, `val_loss` y `test_loss` incluyen esa penalización;
-la selección entre coeficientes sigue usando F1 macro. CNN v1 mantiene L2
-desactivada por defecto.
-
-Para ajustar la búsqueda, cambia `L2_RATES` en `src/models/cnn_v2.py` o pasa
-los valores explícitamente:
-
-```python
-from models.cnn_v2 import train_model_v2
-
-result = train_model_v2(l2_rates=(0.0, 1e-5, 1e-4, 1e-3))
-print(result["best_l2_rate"])
-# Para evaluar un único valor: train_model_v2(l2_rates=(1e-4,))
-```
-
-La colección no puede estar vacía y los coeficientes deben ser finitos y no
-negativos. `search_results` incluye `l2_rate` para cada candidato y el modelo
-devuelto conserva el coeficiente ganador. Cuando se comparan varios valores,
-se genera `public/images/cnn_v2/cnn_v2_l2_comparison.png`; todas las etiquetas
-de comparación incluyen L2. Las comparaciones de parámetros fijos conservan
-sus imágenes existentes.
-
 ### Diagnóstico
 
 - Si `venv` falla en `ensurepip` o muestra `Operation not permitted` dentro de
@@ -213,31 +162,29 @@ sus imágenes existentes.
   `export LD_LIBRARY_PATH=...` de la sección de activación en esa terminal.
   Añade al buscador de bibliotecas las rutas CUDA instaladas por pip en el entorno.
 
-## Análisis de datos
+## Flujo del programa
 
-`src/main.py` ejecuta el análisis después de preparar el dataset. Para analizar
-únicamente los datos ya descargados, sin conexión a Kaggle:
+Al ejecutar `python src/main.py`, el programa realiza estas etapas en orden:
 
-```powershell
-.\.venv\Scripts\python.exe src/scripts/data_analysis.py
-```
-
-Todas las salidas del análisis se guardan en `public/images/` con el prefijo
-`analisis_`: gráficas y tablas como PNG y tablas completas como CSV. Una nueva ejecución
-sobrescribe las salidas con el mismo nombre. Las imágenes originales no se modifican.
-
-El análisis incluye conteos y balance por clase, dimensiones y proporciones,
-peso y formatos, integridad y correspondencia con el CSV, duplicados exactos
-de archivo y de píxeles RGB, candidatos visuales por dHash, brillo, contraste,
-nitidez aproximada, muestras por clase y concentración de fuentes y creadores.
-Los mosaicos por clase usan semilla 42; las métricas se calculan sobre todas las
-imágenes que se pueden decodificar. Las incidencias detectadas se cuentan en consola.
-
-Los candidatos dHash (64 bits, distancia de Hamming de hasta 5) requieren
-revisión visual y no equivalen a duplicados confirmados. Se comparan todos los
-pares, por lo que esa etapa tiene costo cuadrático. Los indicadores de calidad
-se calculan en gris sobre miniaturas de hasta 256 píxeles por lado; dependen
-también del fondo y las texturas y no justifican descartar imágenes automáticamente.
+1. **Descarga o reutilización:** obtiene el dataset de Kaggle en `data/raw/`
+   o reutiliza una descarga local completa.
+2. **Exclusiones visuales:** retira de los originales y sus metadatos las imágenes
+   registradas en `src/scripts/excluded_images.txt`.
+3. **Vista previa:** genera un mosaico de imágenes en `public/images/eda/preview.png`.
+4. **Análisis exploratorio (EDA):** revisa distribución de clases, características
+   de las imágenes, integridad, duplicados y similitud visual. Guarda gráficas
+   en `public/images/eda/` y tablas CSV en `public/documents/`.
+5. **Limpieza y preprocesamiento:** usa los resultados del análisis para excluir
+   conflictos de etiquetas y copias exactas o similares; convierte las imágenes
+   a RGB y 320×320, conservando proporciones, en `data/processed/`.
+6. **División estratificada:** asigna 70% a train, 15% a validación y 15% a test,
+   con semilla 42. Guarda sus metadatos en `data/sets/` sin mover las imágenes.
+7. **Augmentación fija:** copia los conjuntos y añade una variante por original
+   de train en `data/augmented/`; validación y test conservan solo originales.
+8. **Entrenamiento y evaluación:** entrena EfficientNet-B0 en dos etapas y
+   selecciona los pesos con mayor F1 macro de validación.
+9. **Salidas:** guarda curvas, métricas visuales y matrices de confusión en
+   `public/images/efficientnet_b0/`, y el modelo en `public/models/efficientnet.keras`.
 
 ## Limpieza visual del dataset
 
@@ -255,23 +202,13 @@ etiquetas dudosas siguen pendientes de revisión.
 | Test | 310 | 310 | 310 |
 | Total | 2,066 | 1,965 | 3,325 |
 
-## Preprocesamiento a 320×320 y augmentación
+## Preprocesamiento a 320×320
 
 El tamaño se define en `src/scripts/transform_data.py` con `IMAGE_SIZE = 320`.
 Cada imagen se lee desde `data/raw/` y se ajusta directamente a 320×320 sin
 desenfoque gaussiano, conservando corrección EXIF, RGB, proporciones,
 interpolación LANCZOS y relleno negro centrado. Se mantiene JPEG con calidad 95
 y sin submuestreo de color en `data/processed/`.
-
-La augmentación conserva las dimensiones recibidas y añade variantes solo a
-train. Las imágenes y los metadatos necesarios para entrenar se guardan en
-`data/augmented/images/` y `data/augmented/sets/`. Los conteos se muestran
-únicamente en consola; la augmentación no genera reportes en `public/`.
-
-```text
-data/raw/ → ajuste directo a 320×320, sin desenfoque → data/processed/
-         → augmentación fija a 320×320 → data/augmented/ → EfficientNet-B0
-```
 
 Ambas CNN toman su entrada del tamaño del preprocesamiento: `(320, 320, 3)`.
 La normalización sigue siendo `float32` entre 0 y 1. Con la arquitectura actual,
@@ -290,18 +227,101 @@ originales de `data/raw/`; no amplía las versiones ya reducidas a 224×224.
 `main.py` prepara los splits, genera la augmentación fija y entrena EfficientNet-B0
 con `data/augmented`. Las CNN anteriores pueden ejecutarse por separado.
 
-## Línea base de EfficientNet-B0
+## CNN v1
 
-`src/models/efficientnet_b0.py` utiliza `tf.keras.applications.EfficientNetB0`
-con pesos de ImageNet, `include_top=False` y la base congelada en la primera etapa.
+`src/models/cnn_v1.py` implementa una CNN que aprende desde cero. Tiene cuatro
+bloques de convolución 3×3 con 16, 32, 64 y 128 filtros, activación ReLU y
+max pooling. Después aplica `Flatten → Dense(128, ReLU) → Dense(10, softmax)`
+para obtener las probabilidades de las diez clases. Usa `data/processed/` y
+los metadatos de `data/sets/`, sin augmentación.
+
+Hiperparámetros y configuración predeterminados:
+
+- **Entrada:** 320×320×3, RGB `float32` normalizado a [0, 1].
+- **Max pooling:** ventana 4×4, stride 2 y padding `same` en los cuatro bloques.
+- **Optimizador:** Adam con learning rate `0.001`.
+- **Batch:** 32; **máximo de épocas:** 30; **semilla:** 42.
+- **Regularización:** dropout 0 (sin capa de dropout) y L2 0 (desactivada).
+- **Pérdida:** `SparseCategoricalCrossentropy`; métrica de entrenamiento: accuracy.
+- **Selección y EarlyStopping:** mayor F1 macro de validación, paciencia de
+  5 épocas sin mejora y restauración de los mejores pesos.
+
+Para entrenarla con los datos preparados:
+
+```bash
+python src/models/cnn_v1.py
+```
+
+Exporta los reportes PNG en `public/images/cnn_v1/`. Registra también
+loss y accuracy de test por época, sin usarlos para seleccionar los pesos.
+
+## CNN v2
+
+`src/models/cnn_v2.py` aprende desde cero con cuatro convoluciones 3×3 de
+16, 32, 64 y 128 filtros ReLU, max pooling y el clasificador
+`Flatten → Dense(128, ReLU) → Dropout → Dense(10, softmax)`.
+Reutiliza el constructor de CNN v1 e incorpora augmentación fija, dropout y
+regularización L2 sobre los kernels de las convoluciones y capas densas.
+Usa las imágenes de `data/augmented/images/` y sus CSV en `data/augmented/sets/`.
+
+Hiperparámetros y configuración predeterminados:
+
+- **Entrada:** 320×320×3, RGB `float32` normalizado a [0, 1].
+- **Max pooling:** ventana 3×3, stride 2 y padding `same` en los cuatro bloques.
+- **Optimizador:** Adam con learning rate `0.001`.
+- **Batch:** 32; **máximo de épocas:** 30 por candidato; **semilla:** 42.
+- **Regularización:** dropout `0.5` después de la capa densa de 128 unidades
+  y L2 `1e-4`, sin penalizar sesgos.
+- **Pérdida:** `SparseCategoricalCrossentropy` más la penalización L2;
+  métrica de entrenamiento: accuracy.
+- **Selección y EarlyStopping:** mayor F1 macro de validación, paciencia de
+  5 épocas sin mejora y restauración de los mejores pesos de cada candidato.
+
+Admite búsqueda mediante `ParameterGrid`, pero las listas actuales contienen
+un solo valor de learning rate, dropout, pooling y L2: se evalúa **una sola
+combinación**. Si se amplían, gana la de mayor F1 macro de validación; ante
+un empate se conserva la primera. Test se evalúa después de elegir al ganador,
+con sus pesos de cada época, y no interviene en la selección.
+
+Para entrenarla con los datos aumentados preparados:
+
+```bash
+python src/models/cnn_v2.py
+```
+
+Exporta los reportes PNG en `public/images/cnn_v2/`. Las gráficas de
+comparación se generan solo para los hiperparámetros que tengan varios valores.
+
+## EfficientNet-B0
+
+`src/models/efficientnet_b0.py` aplica transfer learning con
+`tf.keras.applications.EfficientNetB0`, pesos de ImageNet, `include_top=False`
+y la base congelada en la primera etapa.
 También llama la base con `training=False` para conservar las estadísticas de
 BatchNormalization y desactivar la aleatoriedad interna de la base. Primero aprende
 el clasificador: `GlobalAveragePooling2D → Dropout(0.5) → Dense(n_clases, softmax)`.
 Las clases se infieren de train en orden alfabético; actualmente son diez y el
-clasificador tiene 12,810 parámetros entrenables. Después ajusta `block7a_*` y
-`top_conv` durante un máximo de 10 épocas con learning rate `1e-5`, manteniendo
-BatchNormalization congelada. Conserva los mejores pesos entre ambas etapas
-según F1 macro de validación; `fine_tune_epochs=0` omite el ajuste parcial.
+clasificador tiene 12,810 parámetros entrenables. Después ajusta los bloques
+`block6*`, `block7a_*` y `top_conv`, manteniendo BatchNormalization congelada.
+Conserva los mejores pesos entre ambas etapas según F1 macro de validación;
+`fine_tune_epochs=0` omite el ajuste parcial.
+
+Hiperparámetros y configuración predeterminados:
+
+- **Entrada:** 320×320×3, RGB `float32` en [0, 255]; la normalización está
+  incorporada en EfficientNet.
+- **Optimizador:** Adam; **dropout del clasificador:** `0.5`.
+- **Batch:** 32; **semilla:** 42.
+- **Primera etapa:** base ImageNet congelada, learning rate `0.001` y máximo
+  30 épocas para entrenar el clasificador.
+- **Fine-tuning:** bloques 6 y 7 y `top_conv`, con BatchNormalization congelada,
+  learning rate inicial `1e-5` y máximo 15 épocas adicionales.
+- **Reducción del learning rate:** `ReduceLROnPlateau` sobre `val_loss`, modo
+  `min`, factor `0.5`, paciencia 2 y mínimo `1e-7`, en cada etapa.
+- **Pérdida:** `SparseCategoricalCrossentropy`; métrica de entrenamiento: accuracy.
+- **Selección y EarlyStopping:** mayor F1 macro de validación, paciencia de
+  5 épocas sin mejora y restauración de los mejores pesos de cada etapa.
+  Al terminar se conservan los mejores pesos entre ambas etapas.
 
 La entrada por defecto es `data/augmented/images`, con los CSV existentes en
 `data/augmented/sets/{train,val,test}/metadata.csv`. Train contiene originales
@@ -310,101 +330,7 @@ ejecutar únicamente este modelo. Los CSV deben contener `class` y `path`, con
 rutas relativas a la carpeta de imágenes, las mismas clases en los tres
 conjuntos y ninguna ruta repetida dentro de un conjunto o entre conjuntos.
 
-Aunque las imágenes procesadas son de 320×320, el cargador las ajusta a
-**224×224** con interpolación bilineal, antialias y relleno negro para conservar
+El cargador entrega imágenes de **320×320** por defecto y ajusta cualquier
+otro tamaño con interpolación bilineal, antialias y relleno negro para conservar
 proporciones. No modifica los archivos ni aplica augmentación. A diferencia de
 las CNN anteriores, entrega RGB `float32` en **[0, 255]**, sin dividir por 255:
-EfficientNet ya incorpora su normalización. Tampoco se usa
-`load_normalized_image` ni se añade otra capa de reescalado.
-Consulta la [documentación de EfficientNet de Keras](https://keras.io/api/applications/efficientnet/)
-y la [guía de transferencia de aprendizaje](https://keras.io/guides/transfer_learning/).
-
-La configuración inicial es Adam con learning rate `0.001`, batch `32`, máximo
-`30` épocas y semilla `42`. Usa `SparseCategoricalCrossentropy` y accuracy;
-calcula F1 macro de toda la validación al terminar cada época. EarlyStopping
-restaura los pesos de mayor F1 macro de validación después de cinco épocas sin
-mejora; si hay empate conserva la primera. Al terminar cada época también se
-evalúa test para registrar `test_loss` y `test_accuracy` y mostrarlos junto con
-train y val en las curvas. Estas métricas quedan en el historial devuelto por
-la función; la selección de pesos sigue usando únicamente F1 macro de validación.
-Los reportes finales evalúan los pesos seleccionados. Una pérdida o predicción de validación no finita
-interrumpe la ejecución sin exportar un modelo de esa ejecución.
-
-### Ejecutar y cambiar el conjunto
-
-Para entrenar solo EfficientNet sobre los datos aumentados ya preparados:
-
-```powershell
-.\env\Scripts\python.exe src/models/efficientnet_b0.py
-```
-
-Dentro de WSL, con el entorno activado: `python src/models/efficientnet_b0.py`.
-La primera ejecución necesita conexión para descargar los pesos oficiales de
-ImageNet si todavía no están en la caché de Keras. No hay fallback a pesos
-aleatorios. `python src/main.py` ejecuta antes toda la preparación de datos.
-
-Para otro conjunto, cambia las constantes al inicio del archivo o pasa las
-rutas a la función desde Python, teniendo `src` en la ruta de importación:
-
-```python
-from models.efficientnet_b0 import train_efficientnet_b0
-
-result = train_efficientnet_b0(
-    input_dir="data/mi_dataset/images",
-    sets_dir="data/mi_dataset/sets",
-    output_dir="public/images/efficientnet_b0_mi_dataset",
-    artifacts_dir="public/models",
-    epochs=30,
-    batch_size=32,
-    learning_rate=0.001,
-    dropout_rate=0.5,
-    patience=5,
-    seed=42,
-    image_size=224,
-)
-```
-
-El modelo se guarda directamente en `public/models/efficientnet.keras`, sin
-crear una subcarpeta del modelo ni generar un archivo JSON. Una nueva ejecución
-en la misma carpeta sustituye ese archivo. El historial, las clases, la
-configuración y las métricas siguen disponibles en el diccionario `result`.
-
-El conjunto aumentado existente se usa por defecto. Para generarlo a partir de
-los datos procesados y splits existentes, ejecuta `python src/scripts/data_augmentation.py`.
-EfficientNet reutiliza esas imágenes sin aplicar augmentación dinámica.
-Cambiar el dataset o sus splits no ejecuta ninguna
-búsqueda automática de hiperparámetros.
-
-## División del dataset
-
-Después de la transformación, `src/main.py` divide `data/processed` en train
-(70%), validation (15%) y test (15%), estratificando por clase con semilla 42.
-Utiliza dos llamadas a `train_test_split` de scikit-learn con `stratify`: primero
-separa train del resto y después divide el resto en validation y test.
-Para ejecutar únicamente la división:
-
-```powershell
-.\.venv\Scripts\python.exe src/scripts/split_data.py
-```
-
-Los metadatos se guardan en `data/sets/train/metadata.csv`,
-`data/sets/val/metadata.csv` y `data/sets/test/metadata.csv`. La columna `path`
-contiene rutas relativas a la carpeta de entrada; las imágenes permanecen allí.
-Para cargar una imagen, combina esa carpeta con el valor de `path`.
-
-Las gráficas por conjunto y la tabla visual se guardan en `public/images/split/`.
-Los conteos por clase se exportan a `public/documents/split_conteos_clases.csv`.
-Una nueva ejecución actualiza los CSV y PNG generados.
-
-La entrada debe contener `metadata.csv` con el mismo esquema que el procesado
-y las imágenes referenciadas. Configura las rutas y la semilla en las constantes
-al inicio de `src/scripts/split_data.py`:
-
-```python
-INPUT_DIR = ROOT / "data" / "processed"
-SETS_DIR = ROOT / "data" / "sets"
-SEED = 42
-```
-
-Los tamaños se configuran con `TRAIN_PERCENT = 70`, `VAL_PERCENT = 15` y
-`TEST_PERCENT = 15`; deben ser enteros positivos y sumar 100.
