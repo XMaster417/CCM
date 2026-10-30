@@ -14,14 +14,16 @@
 % Sin barreras entre las subsecciones exploratorias: el texto puede llenar las columnas.
 % Se conserva la barrera al cerrar la sección para no adelantar la siguiente.
 % Permitir compilar desde docs/ o desde la raíz del proyecto.
-\graphicspath{{../public/images/}{public/images/}}
+\graphicspath{{figures/}{docs/figures/}{../public/images/}{public/images/}}
+% Las cinco figuras historico/ proceden de 64816fc:public/images/eda/.
+% Corresponden al EDA de 2,084 originales, antes de las exclusiones visuales.
 \hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
 \urlstyle{same}
 \renewcommand{\IEEEkeywordsname}{Palabras clave}
 \renewcommand{\bibsection}{\section*{Referencias}}
 \renewcommand{\bibfont}{\footnotesize}
 \setlength{\bibhang}{1.5em}
-\setlength{\bibsep}{0.6\baselineskip}
+\setlength{\bibsep}{0.2\baselineskip}
 \setlength{\emergencystretch}{1em}
 
 \begin{document}
@@ -37,18 +39,18 @@ Grupo 601}}
 \maketitle
 
 \begin{abstract}
-La clasificación de carros requiere reconocer diferencias entre modelos que pueden compartir formas, colores y escenarios. En este trabajo se analiza una red neuronal convolucional entrenada desde cero para distinguir diez modelos a partir del dataset Car Model Image Classification. Se parte de 2,084 imágenes y se estudian la distribución de clases, las dimensiones, la calidad visual, los duplicados y la procedencia. La limpieza retira 18 imágenes por conflictos de etiquetas, repetición exacta o similitud, las 2,066 restantes se transforman a RGB de $224\times224$ píxeles y se dividen de manera estratificada en entrenamiento, validación y prueba. La red contiene cuatro bloques convolucionales y 115,242 parámetros, y utiliza ReLU, max pooling, Adam y detención temprana. Con los mejores pesos de validación se obtiene una exactitud aproximada de 0.464 en entrenamiento, 0.294 en validación y 0.310 en prueba. El F1 macro de prueba es 0.273. Las curvas muestran sobreajuste y la matriz de confusión evidencia un desempeño desigual entre clases. Se discuten la concentración de autores, la ambigüedad de algunas imágenes y la posible pérdida de información por el preprocesamiento y la reducción espacial. Los resultados constituyen una referencia inicial y muestran que una arquitectura compacta necesita acompañarse de datos representativos y una evaluación cuidadosa de la generalización.
+La clasificación de modelos de carros exige distinguir características visuales semejantes bajo cambios de perspectiva, iluminación y fondo. Este trabajo reconstruye la evolución de dos CNN entrenadas desde cero y de EfficientNet-B0 con transferencia de aprendizaje sobre diez clases del dataset Car Model Image Classification. Se parte de 2,084 imágenes y de un análisis exploratorio de calidad, duplicados, balance y procedencia. La CNN v1 original, con entrada de $224\times224$ y 115,242 parámetros, obtiene una exactitud de prueba de 0.310 y F1 macro de 0.273. En CNN v2 se estudian dropout, selección por F1 macro, pooling, búsqueda de hiperparámetros, mayor resolución, augmentación y regularización L2. Una etapa con augmentación alcanza F1 macro de prueba de 0.325, pero la configuración posterior con L2 obtiene 0.274, evidenciando que mejorar validación no garantiza generalizar mejor. EfficientNet-B0 eleva el F1 macro de prueba desde 0.564 con la base congelada hasta 0.676 en la configuración final, que incluye ajuste fino, entrada de $320\times320$ y una revisión visual con 101 exclusiones. Esta última ejecución obtiene exactitud de prueba de 0.681. Se distinguen las mejoras observadas de sus posibles causas, pues también cambian las particiones y el control de la tasa de aprendizaje. Persisten sobreajuste, confusiones entre clases y posibles sesgos de procedencia. Los experimentos muestran la utilidad conjunta de representaciones preentrenadas, evaluación por clase y revisión de los datos, sin constituir una ablación controlada.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Clasificación de imágenes, carros, redes neuronales convolucionales, análisis exploratorio, sobreajuste, evaluación multiclase.
+Clasificación de carros, CNN, EfficientNet-B0, transferencia de aprendizaje, regularización, augmentación, calidad de datos, F1 macro.
 \end{IEEEkeywords}
 
 \section{Introducción}
 
 Identificar el modelo de un carro a partir de una imagen parece una tarea sencilla cuando se observan sus logos o su forma completa. Sin embargo, las fotografías pueden mostrar únicamente un faro, el interior o una vista parcial. También pueden contener varios vehículos, modificaciones estéticas y fondos que se repiten. Por esta razón, el problema no consiste solamente en identificar que hay un carro, sino en encontrar características que permitan distinguir una categoría de otra a pesar de esas variaciones.
 
-Una red neuronal convolucional, o CNN, permite aprender patrones visuales mediante filtros que se ajustan durante el entrenamiento. En este proyecto se utiliza una CNN propia para clasificar diez modelos de carros. El interés está en analizar qué información recibe la red, qué se conserva o se pierde al preparar las imágenes y hasta qué punto el desempeño observado se mantiene en ejemplos que no actualizan los pesos.
+Una red neuronal convolucional, o CNN, permite aprender patrones visuales mediante filtros que se ajustan durante el entrenamiento. En este proyecto se comparan una CNN propia inicial, su evolución CNN v2 y EfficientNet-B0 con pesos preentrenados. El interés está en analizar qué información recibe cada red, qué se conserva o se pierde al preparar las imágenes y hasta qué punto el desempeño observado se mantiene en ejemplos que no actualizan los pesos.
 
 Se toma como referencia el análisis exploratorio de imágenes de \citet{zhang2024}, que propone pasar del procesamiento y las mediciones a la identificación e interpretación de patrones. Este enfoque resulta útil para relacionar los hallazgos del dataset con decisiones concretas, sin considerar que toda diferencia observada representa automáticamente un defecto. El estudio de \citet{khan2026} aporta una discusión sobre desbalance y evaluación de clases minoritarias. Por su parte, Appasami y Savarimuthu (\citeyear{appasami2025}) estudian arquitecturas ligeras y el efecto de configurar convoluciones, pooling y entrenamiento.
 
@@ -62,7 +64,7 @@ Appasami y Savarimuthu (\citeyear{appasami2025}) estudian conjuntamente kernel, 
 
 Se utiliza el dataset \textit{Car Model Image Classification}, publicado en Kaggle por el usuario lightangle \citep{dataset}. Al momento de cargar los datos, se conserva una copia local de las imágenes y sus metadatos, lo que permite separar el material de origen de las transformaciones posteriores.
 
-El dataset analizadp contiene 2,084 imágenes distribuidas en diez clases. Los metadatos incluyen clase, nombre del archivo, título, creador, licencia, versión de licencia, fuente y enlaces de procedencia. La fuente declarada es Flickr en 2,083 registros y Sketchfab en uno.
+El dataset analizado contiene 2,084 imágenes distribuidas en diez clases. Los metadatos incluyen clase, nombre del archivo, título, creador, licencia, versión de licencia, fuente y enlaces de procedencia. La fuente declarada es Flickr en 2,083 registros y Sketchfab en uno.
 
 La Tabla~\ref{tab:distribucion} muestra todas las clases que contiene el dataset y la distribución de imágenes que pertenecen a cada clase.
 
@@ -97,13 +99,13 @@ Total & 2,084 \\
 
 BMW M5 es la clase original más numerosa, con 239 imágenes, mientras que Audi RS5 tiene 124. En terminos de porcentaje son aproximadamente 11.47\% y 5.95\%, respectivamente, y la razón entre ambos conteos es 1.93. Hay un desbalance que debe tomarse en cuenta.
 
-Una posbile consecuencia de este desbalanceo es que acertar en las clases más frecuentes puede elevar la exactitud global aun cuando otras categorías se reconozcan poco. Por ello, es importante considerar esto más adelante.
+Una posible consecuencia de este desbalance es que acertar en las clases más frecuentes puede elevar la exactitud global aun cuando otras categorías se reconozcan poco. Por ello, es importante considerar esto más adelante.
 
 La Figura~\ref{fig:muestras} muestra cuatro ejemplos por clase, seleccionados de forma aleatoria. Se observan diferentes cambios en la perspectiva, iluminación y fondo. También aparecen interiores, acercamientos y escenas con varios vehículos. Estos ejemplos sugieren que el dataset incluye tanto variación visual válida como posibles problemas de relevancia o etiquetado.
 
 \begin{figure}[!htbp]
 \centering
-\includegraphics[width=\columnwidth,height=0.60\textheight,keepaspectratio]{eda/eda_muestras_clases.png}
+\includegraphics[width=\columnwidth,height=0.60\textheight,keepaspectratio]{historico/eda_muestras_clases.png}
 \caption{Cuatro ejemplos originales por clase, con semilla 42.}
 \label{fig:muestras}
 \end{figure}
@@ -114,7 +116,7 @@ La Figura~\ref{fig:dimensiones} resume dimensiones, resolución, relación de as
 
 \begin{figure}[!htbp]
 \centering
-\includegraphics[width=\columnwidth]{eda/eda_dimensiones_peso.png}
+\includegraphics[width=\columnwidth]{historico/eda_dimensiones_peso.png}
 \caption{Dimensiones corregidas por orientación EXIF, resolución, relación de aspecto y peso de las imágenes originales.}
 \label{fig:dimensiones}
 \end{figure}
@@ -125,7 +127,7 @@ En la Figura~\ref{fig:calidad} se observan distribuciones y valores extremos por
 
 \begin{figure*}[!t]
 \centering
-\includegraphics[width=0.92\textwidth,height=0.40\textheight,keepaspectratio]{eda/eda_calidad_visual.png}
+\includegraphics[width=0.92\textwidth,height=0.40\textheight,keepaspectratio]{historico/eda_calidad_visual.png}
 \caption{Indicadores exploratorios de brillo, contraste y nitidez aproximada, globales y por clase.}
 \label{fig:calidad}
 \end{figure*}
@@ -138,7 +140,7 @@ En BMW M5, 218 de las 239 imágenes originales, equivalentes a 91.21\%, pertenec
 
 \begin{figure*}[!t]
 \centering
-\includegraphics[width=0.92\textwidth,height=0.26\textheight,keepaspectratio]{eda/eda_procedencia_creadores.png}
+\includegraphics[width=0.92\textwidth,height=0.26\textheight,keepaspectratio]{historico/eda_procedencia_creadores.png}
 \caption{Creadores más frecuentes y participación del principal creador en cada clase original. La concentración es particularmente alta en BMW M5. Fuente: análisis del campo de creador en los metadatos.}
 \label{fig:autores}
 \end{figure*}
@@ -147,6 +149,8 @@ Esto es importante porque si un autor utiliza escenarios, encuadres o marcas de 
 
 \FloatBarrier
 \section{Limpieza, transformación y conjuntos de datos}
+
+Esta sección y las dos siguientes describen la ejecución original de CNN v1: entrada de $224\times224$, suavizado gaussiano, pooling con paso cuatro y selección por mínima pérdida de validación. Se conserva esta referencia histórica para interpretar sus reportes. El código actual utiliza otras dimensiones y criterios, que se documentan en las etapas posteriores; volver a ejecutarlo no reproduce automáticamente esta configuración inicial.
 
 \subsection{Duplicados y conflictos de etiquetas}
 
@@ -164,7 +168,7 @@ Seis pares tienen etiquetas distintas pero representan la misma imagen o muy sim
 
 \begin{figure*}[!t]
 \centering
-\includegraphics[width=0.92\textwidth]{eda/eda_similares_misma_clase.png}
+\includegraphics[width=0.92\textwidth]{historico/eda_similares_misma_clase.png}
 \caption{Los tres pares candidatos por similitud dHash, ordenados por distancia.}
 \label{fig:similares}
 \end{figure*}
@@ -310,7 +314,7 @@ La pérdida considera cuánta probabilidad se asigna a la clase correcta, no ún
 
 La red se entrena desde cero en CPU con TensorFlow/Keras, en cada lote se calcula la pérdida y se propaga su gradiente desde la salida hacia los parámetros de las capas anteriores mediante la regla de la cadena. Este proceso, conocido como retropropagación, determina cómo modificar los pesos para reducir el error observado.
 
-Se utiliza Adam con tasa de aprendizaje 0.001, ya que, dam mantiene estimaciones de primer y segundo momento del gradiente para adaptar las actualizaciones de cada parámetro \citep{kingma2015} y la tasa controla la escala de esas actualizaciones, pero su valor no representa una garantía de convergencia ni de generalización. Por otro lado, Los lotes de 32 permiten actualizar la red con grupos de ejemplos. Con 1,446 imágenes se requieren 46 lotes por época.
+Se utiliza Adam con tasa de aprendizaje 0.001, ya que, adam mantiene estimaciones de primer y segundo momento del gradiente para adaptar las actualizaciones de cada parámetro \citep{kingma2015} y la tasa controla la escala de esas actualizaciones, pero su valor no representa una garantía de convergencia ni de generalización. Por otro lado, Los lotes de 32 permiten actualizar la red con grupos de ejemplos. Con 1,446 imágenes se requieren 46 lotes por época.
 
 \begin{table}[!htbp]
 \caption{Configuración del entrenamiento analizado}
@@ -366,7 +370,7 @@ m_{\mathrm{macro}}=\frac{1}{K}\sum_{k=1}^{K}m_k.
 En particular, el F1 macro promedia los diez valores de $F1_k$, así se conserva la importancia de Audi RS5 y Mercedes AMG GT aunque tengan menos ejemplos.
 
 \FloatBarrier
-\section{Resultados obtenidos}
+\section{Resultados de la CNN v1 original}
 
 \subsection{Desempeño global con los pesos restaurados}
 
@@ -474,13 +478,319 @@ Otros resultados son que diez imágenes de Nissan GT-R y diez de Porsche 911 se 
 BMW M5 recupera buena parte de sus ejemplos, pero también recibe errores de otras filas y su recall alto no implica que todas sus predicciones sean correctas.
 
 
-\section{Conclusiones}
-% por ahora nada
+\FloatBarrier
+\section{Evolución de la CNN v2}
 
-\begin{thebibliography}{8}
+\subsection{Mejoras aplicadas}
+
+\textit{Dropout} desactiva aleatoriamente una fracción de las activaciones durante el entrenamiento, para reducir la dependencia de combinaciones particulares de unidades, por ello, la exactitud de entrenamiento registrada durante una época con dropout no es directamente equivalente a evaluar después esos mismos datos. Appasami y Savarimuthu (\citeyear{appasami2025}) incorporan dropout dentro de su diseño ligero para limitar el sobreajuste, aquí se adapta esa idea a la capa densa de la CNN de carros.
+
+La \textit{búsqueda de hiperparámetros} compara decisiones fijadas antes del entrenamiento, como la tasa de aprendizaje, la ventana del pooling o la probabilidad de dropout. En una búsqueda de malla se evalúan las combinaciones de los valores. \citet{wojciuk2024} muestran que la utilidad de optimizar esos valores depende de la tarea y del conjunto, y que la búsqueda puede ser costosa. Estos trabajos justifican comparar configuraciones mediante validación, sin asumir que un valor recomendado en otro dominio sea óptimo para carros.
+
+La \textit{regularización L2} añade un costo a la magnitud de los pesos, donde se busca limitar soluciones que ajusten demasiado los ejemplos de entrenamiento. \citet{segota2025} utilizan L2 en VGG16 para imágenes de linfoma con un valor de coeficiente de 0.01, el cual no se adopta directamente por diferencias en la arquitectura, el tamaño de los datos y el dominio. 
+
+La \textit{augmentación} genera variaciones de los ejemplos conservando su etiqueta esperada. En fotografías de carros, un reflejo horizontal o una rotación pequeña puede representar otro encuadre del mismo modelo, sin embargo, añadir variantes no equivale a obtener nuevos vehículos independientes ni corrige una etiqueta incorrecta. El trabajo de \citet{segota2025} combina recortes en parches con transformaciones geométricas en histopatología, en este caso solo se adapta la idea de variar las imágenes, sin fragmentar los carros en parches ni introducir giros de 90 grados. 
+
+Finalmente, la \textit{resolución} determina cuánto detalle entra a la red y el \textit{stride} del pooling determina cuántas posiciones se conservan entre bloques. La ventana define la región sobre la que se toma el máximo, el stride define cuánto avanza, para este caso se definieron valores de padding \textit{same} y stride 2
+
+\subsection{Experimentación en la ccn v2}
+
+La primera modificación sobre CNN v1 fue añadir dropout después de la capa densa de 128 unidades, se probaron tasas de 0.3 y 0.5 y se cambió el criterio de selección desde la pérdida de validación hacia el F1 macro de validación, la razón para cambiar esta metrica fue dar igual importancia a las diez clases, frente a los bajos recalls observados en Audi RS5 y BMW M3. 
+
+El uso de GPU permitió explorar una representación espacial mayor. Con entrada de $224\times224$ y stride 2, los tamaños pasan por $112$, $56$, $28$ y $14$, en lugar de terminar en una sola posición. Así, \texttt{Flatten} contiene $14\cdot14\cdot128=25{,}088$ valores y la red tiene 3,310,122 parámetros, frente a 115,242 en la referencia original. Igualmente, se compararon ventanas de pooling y posteriormente se revisó el efecto individual que tenían los  hiperparametros de dropout, learning rate y pooling en la red, aumentando la capacidad de ajuste.
+
+Las gráficas de búsqueda conservadas resumen esta exploración de hiperparametros, en ella se detectó que la combinación que produjo meores resultados fue learning rate 0.001, dropout 0.5 y ventana $3\times3$, con F1 macro de validación de 0.3574. Esta configuración no significa que es la mejor para todos los casos, sino que para este problema mostró el mejor rendimiento entre los diferentes valores evaluados. 
+
+% Fuente de la búsqueda conjunta: a45d990:public/images/cnn_v2/
+% cnn_v2_{dropout,learning,pooling}_comparison.png; entrada 224, 3,310,122 parámetros.
+Después se aumentó la entrada a $320\times320$, se retiró el filtro gaussiano y se incorporó augmentación al conjunto de train. Los cuatro bloques conservan ahora mapas de $160$, $80$, $40$ y $20$ posiciones por eje. \texttt{Flatten} contiene 51,200 valores y la red alcanza 6,652,458 parámetros, lo que se buscó con esta mejora fue una combinación de mayor detalle y mayor capacidad con una estrategia para ampliar las variaciones observadas.
+
+Al aplicar augmentación se guarda una variante por imagen original del conjunto de train, donde se aplicó un reflejo horizontal con probabilidad 0.5, giro de hasta $\pm5^{\circ}$, desplazamiento de hasta 3\% por eje, alejamiento de hasta 10\% y gamma entre 0.9 y 1.1, estas variantes se generan después de dividir los conjuntos originales para que una transformación de una imagen de entrenamiento no termine en otro conjunto. Se mantienen los conjuntos de validación y prueba sin variantes. Tras aplicar este cambio, el conjunto de train pasa de 1,446 a 2,892 entradas.
+
+Finalmente se revisaron diferentes valores de L2 con los valores de la Tabla~\ref{tab:l2}, se encontró que la mejor configuración que producia un valor de F1 macro de validación correspondió a $10^{-4}$, por lo que se quedó en la configuración posterior.
+
+% Fuente: 0a13bae:public/images/cnn_v2/cnn_v2_l2_comparison.png.
+\begin{table}[!htbp]
+\caption{Comparación de L2 con entrada de $320\times320$}
+\label{tab:l2}
+\centering
+\small
+\begin{tabular}{lr}
+\toprule
+Coeficiente $\lambda$ & Mejor F1 macro de validación \\
+\midrule
+0 & 0.3264 \\
+$10^{-5}$ & 0.3286 \\
+$10^{-4}$ & 0.3357 \\
+$10^{-3}$ & 0.3048 \\
+\bottomrule
+\end{tabular}
+\par\smallskip
+\begin{minipage}{\columnwidth}\scriptsize
+Nota. Los demás hiperparametros fueron: Adam con learning rate 0.001, dropout 0.5, pooling $3\times3$, stride 2 y 6,652,458 parámetros en todos los candidatos.
+\end{minipage}
+\end{table}
+
+\begin{figure*}[!t]
+\centering
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=\linewidth]{cnn_v2/cnn_v2_accuracy.png}
+\end{minipage}\hfill
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=\linewidth]{cnn_v2/cnn_v2_loss.png}
+\end{minipage}
+\caption{Curvas conservadas de CNN v2 con L2. El ajuste de train sigue aumentando mientras validación y prueba presentan mejoras limitadas.}
+\label{fig:curvasv2}
+\end{figure*}
+
+\subsection{Resultados y límites de las mejoras}
+
+La Tabla~\ref{tab:evolucioncnn} reúne etapas de la evolución. El aumento de capacidad con stride 2 mejora el ajuste de train, pero el F1 de prueba baja a 0.252. La búsqueda conjunta y la inicialización controlada alcanzan 0.308 en prueba. La etapa con augmentación obtiene 0.325, mientras que el reporte posterior con L2 regresa a 0.274. La selección se hizo por validación; estos resultados de prueba se usan para describir retrospectivamente lo ocurrido, no para redefinir al ganador de la búsqueda.
+
+% Fuentes: public/images/cnn_v1/cnn_v1_metrics.png (restaurado en d4e3552).
+% CNN v2: 6ff2e98, a45d990, fe13c0a y 0a13bae, respectivamente,
+% public/images/cnn_v2/cnn_v2_metrics.png en cada versión.
+\begin{table}[!htbp]
+\caption{Evolución histórica de las CNN; métricas redondeadas}
+\label{tab:evolucioncnn}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{Xrrr}
+\toprule
+Etapa & Acc. prueba & F1 val. & F1 prueba \\
+\midrule
+CNN v1 original & 0.310 & 0.245 & 0.273 \\
+CNN v2, stride 2 & 0.274 & 0.339 & 0.252 \\
+Búsqueda e inicialización controlada & 0.319 & 0.357 & 0.308 \\
+Augmentación, 320 y sin suavizado & 0.348 & 0.321 & 0.325 \\
+Configuración posterior con L2 & 0.297 & 0.336 & 0.274 \\
+\bottomrule
+\end{tabularx}
+\par\smallskip
+\begin{minipage}{\columnwidth}\scriptsize
+Nota. F1 corresponde al promedio macro. Cada ejecución utiliza 310 imágenes de prueba. Los cambios entre etapas no constituyen una ablación controlada; train incluye variantes en las dos últimas.
+\end{minipage}
+\end{table}
+
+\vspace{3cm}
+
+La Tabla~\ref{tab:metricascnnv2} presenta los resultados con los hiperparametros finales, la exactitud de train es 0.958 y la de prueba 0.297, esto representa una separación de 66.1 puntos porcentuales entre ambos conjuntos, el F1 macro de prueba de 0.274, lo que apenas supera el 0.273 de la CNN v1 original. Por tanto, con una red mucho mayor, dropout y L2 aumentaron considerablemente el rendimiento en el conjunto de train, pero no redujeron el comportamiento de overfitting, sino todo lo contrario.
+
+% Fuente: 0a13bae:public/images/cnn_v2/cnn_v2_metrics.png,
+% igual al reporte actual. Los valores son etiquetas redondeadas a tres decimales.
+\begin{table}[!htbp]
+\caption{Métricas finales de CNN v2 con L2}
+\label{tab:metricascnnv2}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrr}
+\toprule
+Conjunto & Accuracy & Prec. macro & Recall macro & F1 macro \\
+\midrule
+Train & 0.958 & 0.959 & 0.959 & 0.959 \\
+Validación & 0.355 & 0.350 & 0.349 & 0.336 \\
+Prueba & 0.297 & 0.282 & 0.286 & 0.274 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+La Figura~\ref{fig:curvasv2} muestra la separación entre entrenamiento y evaluación. La exactitud de train durante \texttt{fit} es menor que su evaluación final porque los pesos cambian dentro de la época y dropout permanece activo durante el aprendizaje. Evaluar el mejor modelo con dropout desactivado explica parte de esa diferencia de medición; no elimina la brecha frente a ejemplos reservados. Las curvas y las métricas finales señalan que el límite ya no se explica solo por falta de capacidad.
+
+\FloatBarrier
+\section{Transfer learning con EfficientNet-B0}
+
+\subsection{Conceptos utilizados}
+
+\textit{Transfer learning} parte de características aprendidas en un conjunto grande para adaptarlas a otra clasificación, es decir, en lugar de estimar todos los filtros desde cero con pocas fotografías, se reutiliza una base preentrenada en ImageNet y se sustituye su clasificador. En el paper de \citet{bilal2025} se compara entrenamiento desde cero, capas congeladas y ajuste fino en reconocimiento de herramientas, sus resultados motivan explorar esas estrategias cuando hay muchas diferencias visuales y pocos datos propios, sin garantizar tener la misma exactitud en carros.
+
+\textit{Congelar la base} significa impedir que sus pesos se actualicen y que unicamente el clasificador sea el que aprenda. \textit{Fine tuning} permite después modificar una parte de la base con una tasa menor de aprendizaje, para adaptar características al dominio. Esta separación reduce el riesgo de alterar bruscamente los pesos preentrenados cuando la cabeza todavía está aprendiendo.
+
+El \textit{global average pooling} convierte cada mapa de características en su promedio espacial, así se obtiene un valor por canal sin conectar individualmente cada posición con la capa densa. En este modelo, la cabeza usa esos valores, dropout y una salida softmax de diez clases, comparado a la capa densa del modelo CNN v2, solo esta cabeza tiene 12,810 parámetros entrenables en la primera etapa.
+
+La \textit{reducción de la tasa de aprendizaje} disminuye la escala de las actualizaciones cuando una métrica deja de mejorar. Appasami y Savarimuthu (\citeyear{appasami2025}) integran ajustes de tasa y detención temprana (early stopping) en su proceso de optimización. En la configuración final del proyecto se distinguen dos funciones, la pérdida de validación controla cuándo reducir el learning rate y el F1 macro de validación determina los mejores pesos y la detención.
+
+\subsection{Implementación y configuración final}
+
+Se utiliza \texttt{EfficientNetB0} con pesos de ImageNet y sin su clasificador original, se utiliza global average pooling, dropout con valor de 0.5 y una capa densa softmax de diez salidas. Las entradas RGB se entregan como \texttt{float32} en $[0,255]$, porque esta implementación incorpora su normalización. Los datos cargados tiene la forma de $320\times320$ con interpolación bilineal, antialias y relleno negro.
+
+Primero se entrenó la cabeza con la base congelada, después se habilitan los bloques 6 y 7 del modelo de efficient net y la convolución superior, conservando congeladas todas las capas de BatchNormalization. Además, la base se invoca con \texttt{training=False} para mantener sus estadísticas de inferencia y desactivar su aleatoriedad interna, esto permite actualizar los pesos habilitados sin recalcular esas estadísticas. En la Tabla~\ref{tab:configefficient} se muestra la configuración final.
+
+% Fuente de configuración: src/models/efficientnet_b0.py en c518fd2.
+\begin{table}[!htbp]
+\caption{Configuración final de EfficientNet-B0}
+\label{tab:configefficient}
+\centering
+\small
+\begin{tabularx}{\columnwidth}{lX}
+\toprule
+Elemento & Configuración \\
+\midrule
+Entrada & RGB $320\times320$, intensidades en $[0,255]$ \\
+Optimizador y pérdida & Adam y entropía cruzada con etiquetas enteras \\
+Lote y semilla & 32 imágenes; semilla 42 \\
+Cabeza & Dropout 0.5; máximo 30 épocas; tasa inicial $10^{-3}$ \\
+Ajuste fino & Bloques 6 y 7 y \texttt{top\_conv}; máximo 15 épocas; tasa inicial $10^{-5}$ \\
+BatchNormalization & Congelada en ambas etapas \\
+Reducción de tasa & Pérdida de validación; factor 0.5; paciencia 2; mínimo $10^{-7}$ \\
+Selección de pesos & Mayor F1 macro de validación; paciencia 5 por etapa \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure*}[!t]
+\centering
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=\linewidth]{efficientnet_b0/efficientnet_b0_accuracy.png}
+\end{minipage}\hfill
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=\linewidth]{efficientnet_b0/efficientnet_b0_loss.png}
+\end{minipage}
+\caption{Curvas de la configuración final de EfficientNet-B0. La línea vertical indica el inicio del ajuste fino después de entrenar la cabeza.}
+\label{fig:curvasefficient}
+\end{figure*}
+
+\subsection{Resultados obtenidos}
+
+La base congelada ya obtiene F1 macro de prueba de 0.564, superior a las etapas de CNN v2 resumidas anteriormente. Con la primera incorporación de ajuste fino y augmentación dinámica se eleva F1 de validación de 0.601 a 0.632, pero prueba apenas cambia de 0.564 a 0.567. Al regresar a augmentación fija, los valores de prueba se mantienen en 0.577 de exactitud y 0.567 de F1, esto muestra que añadir transformaciones o una segunda etapa no garantizó una mejora equivalente fuera de validación.
+
+Posteriormente se amplió el ajuste fino para incluir el bloque 6 y se aumentó su máximo de 10 a 15 épocas, con este cambio se alcanza un F1 macro de prueba de 0.613. Después, al cargar imágenes de $320\times320$ en vez de reducirlas a $224\times224$, el F1 de prueba sube a 0.662, lo que indica que ahora se conserva más información de entrada, aun así, no demuestra por sí solo qué detalles utilizó la red. La Tabla~\ref{tab:evolucionefficient} presenta la secuencia completa, incluida la configuración final con limpieza.
+
+% Fuentes: public/images/efficientnet_b0/efficientnet_b0_metrics.png
+% en 7f4c01d, 7dfdd72, f0a3e20, b009815, aa2fe41 y c518fd2.
+% Antes de c518fd2: test=310; en c518fd2: test=295.
+\begin{table}[!htbp]
+\caption{Evolución histórica de EfficientNet-B0}
+\label{tab:evolucionefficient}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{Xrr}
+\toprule
+Etapa & Acc. prueba & F1 macro prueba \\
+\midrule
+Base congelada & 0.577 & 0.564 \\
+Primer ajuste fino y augmentación dinámica & 0.577 & 0.567 \\
+Retorno a augmentación fija & 0.577 & 0.567 \\
+Ajuste fino ampliado & 0.619 & 0.613 \\
+Entrada a $320\times320$ & 0.665 & 0.662 \\
+Limpieza y configuración final & 0.681 & 0.676 \\
+\bottomrule
+\end{tabularx}
+\par\smallskip
+\begin{minipage}{\columnwidth}\scriptsize
+Nota. Valores redondeados de reportes históricos.
+\end{minipage}
+\end{table}
+
+
+Las curvas de la Figura~\ref{fig:curvasefficient} muestran mejoras de validación y prueba durante el ajuste fino, junto con una separación persistente respecto de train. Aunque la generalización mejora frente a las CNN propias, la red todavía aprovecha mejor los ejemplos de aprendizaje.
+
+\FloatBarrier
+\section{Revisión visual de los datos}
+
+\subsection{Exclusión de contenido poco pertinente}
+
+Se realizó una revisión de imágenes que permitió identificar contenido ambiguo para reconocer la apariencia exterior de un carro. Se registraron 101 imagenes que se excluyeron, 20 fotografías de interiores de carros, 25 imágenes de LEGO, incluidas piezas, y 56 de anuncios. Las imagenes excluidas corresponden a las clases de BMW M3, Chevrolet Camaro y Ford Mustang, con 13, 37 y 51 archivos, respectivamente. El criterio utilizado para esta exclusión fue el contenido observado y su pertinencia para la tarea, no el valor del error que producía cada ejemplo. 
+
+Esta intervención se relaciona con el análisis exploratorio de \citet{zhang2024}, donde las muestras y los patrones visuales permiten formular hipótesis sobre problemas que los indicadores numéricos no describen por sí solos. Por ejemplo, aumentar con rotaciones una imagen de piezas de LEGO produce más variaciones de ese contenido, pero no una fotografía adicional de un vehículo real. Esa diferencia ayuda a explicar por qué conviene revisar datos incluso después de ajustar el modelo.
+
+La exclusión de imagenes es parcial, pues no se revisaron exhaustivamente las diez clases ni se resolvieron todas las miniaturas, renders, detalles o etiquetas dudosas, tampoco se concluye que un interior sea inválido en cualquier tarea, solo que para este proyecto se prioriza reconocer el modelo por su apariencia exterior. Esta selección modifica la población evaluada y define la forma de reconocer las clases de los carros por el exterior.
+
+\subsection{Cambios en el conjunto de datos}
+
+Después de retirar las 101 imágenes, los datos crudos contienen $2{,}084-101=1{,}983$ registros. Al repetir el análisis y la limpieza automática se conservan 1,966 originales. La Tabla~\ref{tab:conjuntosfinales} muestra la distribucion de imagenes para cada conjunto
+
+% Fuentes: c518fd2:src/scripts/excluded_images.txt y
+% c518fd2:public/documents/split_conteos_clases.csv (1,376/295/295).
+% Contraste: data/raw/metadata.csv=1,983; data/processed/metadata.csv=1,966;
+% data/augmented/sets/train/metadata.csv=2,752.
+\begin{table}[!htbp]
+\caption{Conjuntos de la ejecución final tras la revisión visual}
+\label{tab:conjuntosfinales}
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+Conjunto & Originales & Entradas tras augmentación \\
+\midrule
+Train & 1,376 & 2,752 \\
+Validación & 295 & 295 \\
+Prueba & 295 & 295 \\
+\midrule
+Total & 1,966 & 3,342 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Para finalizar, después de esta limpieza de datos, se agregó  \texttt{ReduceLROnPlateau}, que reduce la tasa a la mitad después de dos épocas sin mejorar la pérdida de validación, hasta un mínimo de $10^{-7}$. 
+
+\subsection{Resultados finales y errores que permanecen}
+
+La Tabla~\ref{tab:metricasefficient} recoge las métricas finales, en esta se muestra que la exactitud de prueba aumenta de 0.665 a 0.681 respecto de la ejecución inmediata anterior y F1 macro pasa de 0.662 a 0.676, un aumento de aproximadamente 1.6 y 1.4 puntos porcentuales, respectivamente. En el conjunto de validación, F1 macro sube de 0.692 a 0.706. La revisión visual forma parte de la mejor configuración final registrada, sin embargo no representó un gran salto en el desempeño final del modelo, puesto que el aumento previo de resolución elevó F1 de prueba de 0.613 a 0.662, unos 4.9 puntos.
+
+% Fuente: c518fd2:public/images/efficientnet_b0/efficientnet_b0_metrics.png.
+\begin{table}[!htbp]
+\caption{Métricas finales de EfficientNet-B0 tras la revisión}
+\label{tab:metricasefficient}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrr}
+\toprule
+Conjunto & Accuracy & Prec. macro & Recall macro & F1 macro \\
+\midrule
+Train & 0.969 & 0.969 & 0.970 & 0.970 \\
+Validación & 0.708 & 0.715 & 0.706 & 0.706 \\
+Prueba & 0.681 & 0.693 & 0.674 & 0.676 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.76\textwidth,height=0.70\textheight,keepaspectratio]{efficientnet_b0/efficientnet_b0_confusion_test.png}
+\caption{Matriz de confusión de EfficientNet-B0 en la prueba final de 295 imágenes. La diagonal suma 201 aciertos.}
+\label{fig:confusionefficient}
+\end{figure*}
+
+La matriz de la Figura~\ref{fig:confusionefficient} permite verificar $201/295\approx0.681$ de exactitud. Audi R8 obtiene 32 aciertos de 34 y Nissan GT-R, 28 de 33, sin embargo, persisten dificultades en clases visualmente cercanas, como en BMW M3 que tiene 16 aciertos de 33 y diez de sus imágenes se asignan a BMW M5. Chevrolet Camaro y Ford Mustang tienen 16 y 17 aciertos de 28, respectivamente, con seis errores hacia la otra clase.
+
+La exactitud final de train de 0.969 permanece 28.8 puntos por encima del conjunto de test. Esa brecha y el F1 macro de 0.676 muestran que la transferencia y la revisión de datos ayudan, pero todavía existe un problema de falta de generalización y overfitting.
+
+\FloatBarrier
+\section{Comparación general}
+
+La CNN v1 estableció una referencia pequeña y mostró que la reducción espacial fuerte y el aprendizaje desde cero eran insuficientes para este conjunto. Con la CNN versión 2 se buscó conservar más detalle y controlar el sobreajuste mediante dropout, augmentación y L2. Sin embargo, aumentar de 115,242 a más de seis millones de parámetros hizo mucho más fácil ajustar train y no produjo una ganancia equivalente en prueba. Entre las etapas resumidas, la augmentación alcanzó F1 de prueba de 0.325, mientras que la configuración posterior elegida por validación obtuvo 0.274.
+
+EfficientNet-B0 aporta una representación aprendida previamente y alcanza 0.564 de F1 de prueba incluso con su base congelada. El ajuste fino ampliado, la mayor resolución y la configuración final llevan ese indicador a 0.676. La diferencia respecto de CNN v1 es de 40.3 puntos en F1 macro y 37.1 puntos en exactitud.
+
+\section{Conclusiones}
+
+El proyecto evolucionó desde una CNN compacta con desempeño limitado hasta una solución preentrenada que reconoce mejor las diez clases. La CNN v1 original obtuvo exactitud de prueba de 0.310 y F1 macro de 0.273. CNN v2 permitió explorar regularización, resolución y búsqueda de hiperparámetros, pero mostró que ajustar casi por completo train no equivale a reconocer nuevos ejemplos, porque su reporte posterior con L2 alcanzó F1 de prueba de 0.274, pese a una ventaja en validación dentro de su búsqueda, la etapa previa con augmentación obtuvo 0.325 y constituye una mejora observada dentro de esa secuencia.
+
+La transferencia de aprendizaje produjo el cambio más claro entre las opciones analizadas. EfficientNet-B0 partió de F1 macro de prueba de 0.564 con la base congelada y alcanzó 0.676 con la configuración final, además de exactitud de 0.681. Ajustar parcialmente los pesos y conservar mayor resolución resultó más útil en estas ejecuciones que seguir ampliando la CNN propia. 
+
+La revisión de 101 imágenes de interiores, LEGO y anuncios aportó una mejora final relevante para definir qué debía aprender el sistema. Con esto se alcanzó una mejora en F1 del conjunto de test de 0.662 a 0.676, pero también cambia la partición y el control del learning rate.
+
+Persisten sobreajuste, errores entre BMW M3 y M5 y entre Camaro y Mustang, variación de calidad y etiquetas ambiguas. Los principales problemas enfrentados fueron distinguir capacidad de generalización, sostener comparaciones al cambiar el procesamiento y el dataset, y asumir el costo de una búsqueda cuyos avances en validación no siempre llegaban a prueba. El siguiente paso debe combinar mejores datos con una evaluación estable y repetida, para comprobar si los avances se mantienen fuera de las imágenes utilizadas durante el desarrollo.
+
+\begin{thebibliography}{13}
 
 \bibitem[Appasami \& Savarimuthu(2025)]{appasami2025}
 Appasami, G., \& Savarimuthu, N. (2025). A novel lightweight CNN design for MRI brain tumor image classification with performance-driven optimization. \textit{Discover Computing, 28}, Article 206. \url{https://doi.org/10.1007/s10791-025-09603-4}
+
+\bibitem[Baressi \v{S}egota et al.(2025)]{segota2025}
+Baressi \v{S}egota, S., Mrzljak, V., Lorencin, I., \& An\dj eli\'{c}, N. (2025). Data augmentation-driven improvements in malignant lymphoma image classification. \textit{Computers, 14}(7), Article 252. \url{https://doi.org/10.3390/computers14070252}
+
+\bibitem[Bilal et al.(2025)]{bilal2025}
+Bilal, M., Podishetti, R., Grossmann, D., \& Bregulla, M. (2025). Benchmarking CNN architectures for tool classification: Evaluating CNN performance on a unique dataset generated by novel image acquisition system. \textit{IEEE Access, 13}, 96400--96422. \url{https://doi.org/10.1109/ACCESS.2025.3574785}
 
 \bibitem[Goodfellow et al.(2016)]{goodfellow2016}
 Goodfellow, I., Bengio, Y., \& Courville, A. (2016). \textit{Deep learning}. MIT Press. \url{https://www.deeplearningbook.org/}
@@ -499,6 +809,15 @@ Kingma, D. P., \& Ba, J. (2015). \textit{Adam: A method for stochastic optimizat
 
 \bibitem[lightangle(s.f.)]{dataset}
 lightangle. (s.f.). \textit{Car model image classification} [Conjunto de datos]. Kaggle. \url{https://www.kaggle.com/datasets/lightangle/car-model-image-classification}
+
+\bibitem[Sahaya Sakila et al.(2025)]{sakila2025}
+Sahaya Sakila, V., Sujeetha, R., Ramanathan, S. V., Adhithya Raj, M., \& Philip Regin, B. (2025). A benchmark comparison of simple CNN, ResNet-50, and EfficientNet for image classification. \textit{Archives for Technical Sciences, 33}(2), 535--547. \url{https://doi.org/10.70102/afts.2025.1833.535}
+
+\bibitem[van den Hoogen et al.(2024)]{hoogen2024}
+van den Hoogen, J., Hudson, D., Bloemheuvel, S., \& Atzmueller, M. (2024). Hyperparameter analysis of wide-kernel CNN architectures in industrial fault detection: An exploratory study. \textit{International Journal of Data Science and Analytics, 18}, 423--444. \url{https://doi.org/10.1007/s41060-023-00440-6}
+
+\bibitem[Wojciuk et al.(2024)]{wojciuk2024}
+Wojciuk, M., Swiderska-Chadaj, Z., Siwek, K., \& Gertych, A. (2024). Improving classification accuracy of fine-tuned CNN models: Impact of hyperparameter optimization. \textit{Heliyon, 10}, Article e26586. \url{https://doi.org/10.1016/j.heliyon.2024.e26586}
 
 \bibitem[Zhang et al.(2024)]{zhang2024}
 Zhang, Y., Allen, T. T., \& Rodriguez Buno, R. (2024). Exploratory image data analysis for quality improvement hypothesis generation. \textit{Quality Engineering, 36}(4), 693--712. \url{https://doi.org/10.1080/08982112.2023.2285305}
