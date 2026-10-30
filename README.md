@@ -185,6 +185,11 @@ Al ejecutar `python src/main.py`, el programa realiza estas etapas en orden:
    selecciona los pesos con mayor F1 macro de validación.
 9. **Salidas:** guarda curvas, métricas visuales y matrices de confusión en
    `public/images/efficientnet_b0/`, y el modelo en `public/models/efficientnet.keras`.
+10. **Predicciones:** Procesa las diez imágenes de `src/test/images/` mediante
+   `run_predictions()`. Imprime en consola el archivo, la clase esperada según 
+   su nombre y las tres clases más probables con sus porcentajes, junto con el 
+   resumen de aciertos. Guarda una gráfica con las imágenes y sus probabilidades
+   en `public/images/predictions/predictions_top3.png`.
 
 ## Limpieza visual del dataset
 

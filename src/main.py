@@ -1,16 +1,20 @@
-"""Prepara los datos y entrena EfficientNet con augmentación fija de train."""
+"""Ejecuta el flujo completo, entrena EfficientNet e imprime y grafica predicciones."""
 
-from models.cnn_v1 import train_model_v1
-from models.cnn_v2 import train_model_v2
-from models.efficientnet_b0 import train_efficientnet_b0
-from scripts.data_analysis import analyze_dataset
-from scripts.data_augmentation import augment_dataset
-from scripts.load_data import download_data, preview_images
-from scripts.split_data import split_dataset
-from scripts.transform_data import transform_dataset
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "test"))
+from test_model import run_predictions
 
 
 def main():
+    from models.efficientnet_b0 import train_efficientnet_b0
+    from scripts.data_analysis import analyze_dataset
+    from scripts.data_augmentation import augment_dataset
+    from scripts.load_data import download_data, preview_images
+    from scripts.split_data import split_dataset
+    from scripts.transform_data import transform_dataset
+
 # ------------------------------------------------------------------------------
 # Cargar el dataset
 # ------------------------------------------------------------------------------
@@ -42,8 +46,15 @@ def main():
 # ------------------------------------------------------------------------------
 # Entrenamiento y evaluación de EfficientNet-B0 sobre data/augmented
 # ------------------------------------------------------------------------------
-    train_efficientnet_b0()
+    training = train_efficientnet_b0()
+# ------------------------------------------------------------------------------
+# Predicciones manuales sobre src/test/images con el modelo recién entrenado
+# ------------------------------------------------------------------------------
+    run_predictions(training["model"], training["class_names"])
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"No se pudo completar el proceso: {error}") from error
