@@ -339,3 +339,29 @@ El cargador entrega imágenes de **320×320** por defecto y ajusta cualquier
 otro tamaño con interpolación bilineal, antialias y relleno negro para conservar
 proporciones. No modifica los archivos ni aplica augmentación. A diferencia de
 las CNN anteriores, entrega RGB `float32` en **[0, 255]**, sin dividir por 255:
+
+## Página web de predicciones
+
+La aplicación local permite seleccionar o arrastrar una imagen de automóvil, elegir EfficientNet-B0, CNN v1 o CNN v2, ver su vista previa y pulsar **Predecir** para consultar las tres clases más probables con sus porcentajes y barras. Se puede cambiar la imagen y repetir
+la predicción. 
+
+Desde la raíz del proyecto ejecuta Flask:
+
+```powershell
+.\env\Scripts\python.exe src/web/app.py
+```
+
+Con el entorno activado, abre **http://127.0.0.1:8000** en el navegador del mismo equipo.
+
+Se requieren estos artefactos existentes:
+
+- `public/models/efficientnet.keras`, `public/models/cnn_v1.keras` y `public/models/cnn_v2.keras`: archivos previstos por el selector. 
+- `data/augmented/sets/train/metadata.csv` para EfficientNet y CNN v2; `data/sets/train/metadata.csv` para CNN v1: columna `class`, cuyo orden alfabético debe coincidir con las salidas del modelo. Este archivo está dentro de `data/`, carpeta excluida de Git: debe estar presente también en otro equipo.
+
+### API y límites
+
+`GET /` sirve la interfaz. `POST /api/predict` recibe **un solo archivo** como `multipart/form-data`, en el campo `file`, y el campo `model` con `efficientnet`, `cnn_v1` o `cnn_v2`. Si se omite `model`, se utiliza `efficientnet`.
+
+Se admiten JPEG, PNG, WebP y BMP hasta **10 MiB por imagen**, verificando extensión y decodificación. 
+
+Para comprobar el funcionamiento manualmente, carga una imagen de `src/test/images/`, repite mediante arrastre y cambia de archivo. Comprueba también un archivo inválido, el límite de tamaño y la vista estrecha del navegador. Si falla una conexión, confirma que Flask siga ejecutándose y vuelve a predecir.
