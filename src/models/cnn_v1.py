@@ -1,4 +1,4 @@
-"""Entrena una CNN de diez clases y genera únicamente reportes PNG."""
+"""Entrena una CNN de diez clases, guarda el modelo y genera reportes PNG."""
 
 from pathlib import Path
 import sys
@@ -23,11 +23,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.data_analysis import save_figure
 from scripts.transform_data import IMAGE_SIZE, load_normalized_image
 
-# Definir dónde leer las imágenes y los conjuntos, y dónde guardar los PNG.
+# Definir dónde leer las imágenes y dónde guardar los reportes y el modelo.
 ROOT = Path(__file__).resolve().parents[2]
 INPUT_DIR = ROOT / "data" / "processed"
 SETS_DIR = ROOT / "data" / "sets"
 OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v1"
+ARTIFACTS_DIR = ROOT / "public" / "models"
 
 # Configurar la entrada (alto, ancho, canales), las clases y el entrenamiento.
 IMAGE_SHAPE = (IMAGE_SIZE, IMAGE_SIZE, 3)
@@ -378,9 +379,10 @@ def print_final_metrics(metrics, output_dir):
 
 def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
                 epochs=EPOCHS, batch_size=BATCH_SIZE, seed=SEED, *,
-                dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001):
+                dropout_rate=0.0, model_name="cnn_v1", learning_rate=0.001,
+                artifacts_dir=ARTIFACTS_DIR):
     """
-    Coordina la lectura de datos, el entrenamiento y los reportes de la CNN.
+    Coordina los datos, el entrenamiento, el guardado y los reportes de la CNN.
 
     Args:
         input_dir (str | Path): Carpeta de las imágenes procesadas.
@@ -391,8 +393,10 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         batch_size (int): Máximo de imágenes por lote, por defecto 32.
         seed (int): Semilla de inicialización y mezcla, por defecto 42.
         dropout_rate (float): Tasa de dropout después de Dense ReLU; 0 lo omite.
-        model_name (str): Nombre del modelo y prefijo de sus reportes PNG.
+        model_name (str): Nombre del modelo y prefijo de los archivos keras y PNG.
         learning_rate (float): Tasa de aprendizaje de Adam, por defecto 0.001.
+        artifacts_dir (str | Path): Carpeta donde guardar el modelo completo
+            como <model_name>.keras, reemplazando el archivo si ya existe.
 
     Returns:
         dict: model (modelo con mayor F1 macro de validación), history
@@ -400,7 +404,8 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             val_f1_macro, test_accuracy y test_loss por época), metrics
             (métricas finales),
             confusion_matrices (matrices 10x10), class_names (orden de clases)
-            y output_dir (Path). Solo se exportan los PNG, no el diccionario.
+            y output_dir (Path), además de artifacts_dir y model_path (Path).
+            Exporta el modelo keras y los PNG; no serializa el diccionario.
     """
     # TensorFlow asigna automáticamente las operaciones compatibles a la GPU.
     device = "GPU" if tf.config.list_logical_devices("GPU") else "CPU"
@@ -464,6 +469,14 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
     )
     history = history.history
 
+    # EarlyStopping ya restauró los pesos con mayor F1 macro de validación.
+    # Guardar antes de generar las gráficas finales.
+    artifacts_dir = Path(artifacts_dir)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    model_path = artifacts_dir / f"{model_name}.keras"
+    model.save(model_path)
+    print(f"Modelo guardado en: {model_path.resolve()}", flush=True)
+
     # Generar el historial completo y los reportes finales.
     save_training_plots(history, output_dir, report_prefix=model_name)
     metrics, matrices = save_final_reports(
@@ -476,6 +489,7 @@ def train_model_v1(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         "model": model, "history": history, "metrics": metrics,
         "confusion_matrices": matrices, "class_names": class_names,
         "output_dir": output_dir,
+        "artifacts_dir": artifacts_dir, "model_path": model_path,
     }
 
 if __name__ == "__main__":

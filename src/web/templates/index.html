@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Clasifica una fotografía de automóvil con el modelo que selecciones.">
+  <title>CCM · Clasificador de automóviles</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</head>
+<body>
+  <main>
+    <div class="workspace">
+      <section class="panel upload-panel" aria-labelledby="upload-title">
+        <div class="panel-heading"><span class="step">01</span><h2 id="upload-title">Tu imagen</h2><span class="heading-hint">Una a la vez</span></div>
+        <form id="prediction-form" action="{{ url_for('predict') }}" method="post" enctype="multipart/form-data">
+          <div class="model-selector">
+            <label for="model-select">Modelo</label>
+            <select id="model-select" name="model">
+              {% for model_id, model in models.items() %}
+              <option value="{{ model_id }}">{{ model.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <input id="image-input" class="visually-hidden" type="file" name="file" accept=".jpg,.jpeg,.png,.webp,.bmp" aria-label="Seleccionar imagen de automóvil">
+          <label id="drop-zone" class="drop-zone" for="image-input" tabindex="0" role="button" aria-controls="image-input" aria-disabled="false">
+            <span id="upload-placeholder" class="upload-placeholder">
+              <svg class="upload-icon" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="7" y="8" width="34" height="32" rx="7" stroke="currentColor" stroke-width="1.8"/><circle cx="17" cy="18" r="3" stroke="currentColor" stroke-width="1.8"/><path d="m9 33 10-10 8 8 6-6 7 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <strong>Arrastra tu imagen aquí</strong>
+              <span>o <span class="select-link">selecciona un archivo</span></span>
+              <small>JPEG, PNG, WebP o BMP · Hasta 10 MiB</small>
+            </span>
+            <img id="image-preview" alt="Vista previa de la imagen seleccionada" hidden>
+            <span id="change-image" class="change-image" hidden>Seleccionar otra imagen</span>
+          </label>
+          <div id="file-details" class="file-details" hidden><span id="file-name"></span><span id="file-size"></span></div>
+          <button id="predict-button" class="predict-button" type="submit" disabled><span id="button-label">Predecir</span><span id="button-arrow" aria-hidden="true">→</span><span id="button-spinner" class="spinner" aria-hidden="true" hidden></span></button>
+          <p id="status-message" class="status-message" role="status" aria-live="polite">Selecciona una imagen para comenzar.</p>
+          <p id="error-message" class="error-message" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <section id="results-panel" class="panel results-panel" aria-labelledby="results-title" aria-busy="false">
+        <div class="panel-heading"><span class="step">02</span><h2 id="results-title">Predicciones</h2><span class="top-three-badge">TOP 3</span></div>
+        <div id="results-placeholder" class="results-placeholder">
+          <span class="results-symbol" aria-hidden="true">↗</span>
+          <h3>El siguiente paso está en tu imagen</h3>
+          <p>Aquí aparecerán las tres clases más probables y el porcentaje asignado por el modelo.</p>
+          <div class="placeholder-bars" aria-hidden="true"><span></span><span></span><span></span></div>
+        </div>
+        <div id="results-content" hidden>
+          <p class="results-caption">CLASE MÁS PROBABLE</p>
+          <h3 id="winning-class" class="winning-class"></h3>
+          <p class="ranking-label">Probabilidad por clase</p>
+          <ol id="prediction-list" class="prediction-list" aria-label="Tres clases más probables"></ol>
+          <p class="probability-note">Las tres clases más probables del modelo seleccionado pueden sumar menos de 100 %.</p>
+        </div>
+      </section>
+    </div>
+
+  </main>
+</body>
+</html>
