@@ -1,4 +1,4 @@
-"""Compara configuraciones por F1 macro de validación y exporta reportes PNG."""
+"""Selecciona la CNN por F1 macro de validación, la guarda y exporta reportes PNG."""
 
 from pathlib import Path
 import sys
@@ -27,6 +27,7 @@ from scripts.data_analysis import plt, save_figure
 INPUT_DIR = ROOT / "data" / "augmented" / "images"
 SETS_DIR = ROOT / "data" / "augmented" / "sets"
 OUTPUT_DIR = ROOT / "public" / "images" / "cnn_v2"
+ARTIFACTS_DIR = ROOT / "public" / "models"
 LEARNING_RATES = (0.001,)
 DROPOUT_RATES = (0.5,)
 POOL_SIZES = ((3, 3), )
@@ -147,7 +148,8 @@ def fit_candidate(model, train_dataset, validation_dataset, validation_labels,
 def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR,
                 epochs=EPOCHS, batch_size=BATCH_SIZE, seed=SEED, *,
                 learning_rates=LEARNING_RATES, dropout_rates=DROPOUT_RATES,
-                pool_sizes=POOL_SIZES, l2_rates=L2_RATES):
+                pool_sizes=POOL_SIZES, l2_rates=L2_RATES,
+                artifacts_dir=ARTIFACTS_DIR):
     """
     Compara todas las combinaciones de hiperparametros mediante
     ParameterGrid y selecciona el modelo con mayor F1 macro de validación.
@@ -171,6 +173,8 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         pool_sizes (iterable[tuple[int, int]]): Ventanas, ordenadas de menor
             a mayor antes de evaluarlas.
         l2_rates (iterable[float]): Coeficientes finitos y no negativos de L2
+        artifacts_dir (str | Path): Carpeta donde guardar el ganador como
+            cnn_v2.keras, reemplazando el archivo si ya existe.
 
     Returns:
         dict: model (modelo con mayor F1 macro de validación), history
@@ -183,7 +187,8 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
             best_l2_rate (float)
             search_results (hiperparámetros, F1, épocas y num_parameters
             por combinación). Las épocas se numeran
-            desde 1. Solo se exportan los reportes PNG.
+            desde 1. Incluye artifacts_dir y model_path (Path).
+            Exporta el modelo keras y los PNG; no serializa el diccionario.
     """
     learning_rates = tuple(learning_rates)
     dropout_rates = tuple(dropout_rates)
@@ -276,7 +281,6 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    save_hyperparameter_comparisons(search_results, output_dir)
     print(
         f"\nMejor combinación entre las evaluadas: "
         f"learning_rate={best_result['learning_rate']:g} | "
@@ -311,6 +315,15 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         model.set_weights(best_epoch_weights[best_result["best_epoch"] - 1])
     del best_epoch_weights
 
+    # Guardar al ganador con los pesos de su mejor época de validación.
+    # La evaluación de test anterior no interviene en esta selección.
+    artifacts_dir = Path(artifacts_dir)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    model_path = artifacts_dir / "cnn_v2.keras"
+    model.save(model_path)
+    print(f"Modelo guardado en: {model_path.resolve()}", flush=True)
+
+    save_hyperparameter_comparisons(search_results, output_dir)
     save_training_plots(best_history, output_dir, report_prefix="cnn_v2")
     metrics, matrices = save_final_reports(
         model, datasets, splits, class_names, output_dir, report_prefix="cnn_v2",
@@ -320,6 +333,7 @@ def train_model_v2(input_dir=INPUT_DIR, sets_dir=SETS_DIR, output_dir=OUTPUT_DIR
         "model": model, "history": best_history, "metrics": metrics,
         "confusion_matrices": matrices, "class_names": class_names,
         "output_dir": output_dir,
+        "artifacts_dir": artifacts_dir, "model_path": model_path,
         "best_learning_rate": best_result["learning_rate"],
         "best_dropout_rate": best_result["dropout_rate"],
         "best_pool_size": best_result["pool_size"],
